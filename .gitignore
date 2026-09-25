@@ -1,0 +1,68 @@
+# ---------------------------------------------------------------------------
+# Archivos que NO deben entrar en el repositorio.
+#
+# Regla general: el repositorio contiene codigo fuente, nunca datos reales ni
+# credenciales. Si algo aparece aqui, es porque en la maquina donde se ejecuta
+# la aplicacion puede contener datos de personas reales o claves privadas.
+# ---------------------------------------------------------------------------
+
+# --- Credenciales y configuracion local (D12) --------------------------------
+# config/config.php se copia de config/config.example.php y contiene el usuario,
+# la contrasena de MySQL y el secreto de HMAC. Nunca se versiona.
+/config/config.php
+*.local.php
+*.env
+.env
+/secrets/
+
+# --- Imagenes y archivos subidos por el administrador -----------------------
+# Son los banners y las miniaturas de la campana actual. No aportan nada al
+# repositorio y pueden contener la marca del supermercado.
+/uploads/*
+!/uploads/.htaccess
+!/uploads/.gitkeep
+
+# --- Datos locales de la base de datos -------------------------------------
+# Exportaciones hechos con mysqldump para depuracion o copia de seguridad.
+/*.sql.dump
+/semilla/
+*.ibd
+*.frm
+*.MYD
+*.MYI
+
+# --- Dependencias: no deberian existir (D14, cero dependencias) -------------
+# Si alguno de estos aparece, es que alguien ha introducido una dependencia
+# externa y bin/verificar_docs.php habria fallado. Se listan para que el
+# fichero *.sql.dump o *.tar no acabe en un commit por error.
+/vendor/
+/node_modules/
+composer.json
+composer.lock
+package.json
+package-lock.json
+composer.phar
+
+# --- Artefactos de herramientas de desarrollo ------------------------------
+/build/
+/.phpunit.result.cache
+/.phpdoc.cache/
+*.log
+*.cache
+
+# --- Ficheros temporales del sistema y del editor --------------------------
+/.tmp/
+/tmp/
+*.tmp
+*.swp
+*.swo
+*~
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# --- Sistema operativo y editor ---------------------------------------------
+/.vscode/
+/.idea/
+*.swj
+.DS_Store

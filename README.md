@@ -8,8 +8,11 @@ El proyecto se construye por hitos, con un commit por hito. **En este momento
 está terminado el hito 1**: el esqueleto de la aplicación, el acceso con
 roles, el instalador, la documentación y la suite de pruebas. Las pantallas de
 gestión todavía son provisionales y lo dicen en pantalla, para que nadie las
-tome por terminadas. Lo que falta está detallado en
-[Estado actual](#estado-actual).
+tome por terminadas.
+
+**Para trabajar en el proyecto, empieza por [`ESTADO.md`](ESTADO.md)**: dice en
+qué punto está, cómo comprobar que sigue sano, qué hito toca a continuación y
+qué reglas hay que no romper.
 
 ## Índice
 

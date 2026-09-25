@@ -21,7 +21,7 @@ configura la promoción y el personal de tienda registra las participaciones.
 | --- | --- | --- | --- |
 | 0. Especificación | Terminado | `fcf6770` | Addendum D1–D19 y las 19 decisiones de implementación. |
 | 1. Base y acceso | Terminado | `8c0baf5` | Núcleo, sesiones, rutas, vistas, acceso por roles, instalador, verificador, pruebas, README. |
-| 2. Motor de adjudicación | Terminado | — | Cola de premios, transacción con bloqueo, evita adjudicaciones dobles. |
+| 2. Motor de adjudicación | Terminado | `f8844fe` | Cola de premios, transacción con bloqueo, evita adjudicaciones dobles. |
 | 3. Configuración de la promoción | Pendiente | — | Panel del administrador: días, tramos, tipos de premio, cantidades, calendario. |
 | 4. Participaciones | Pendiente | — | Registro por la azafata, reglas, identidad, las tres pantallas. |
 | 5. Correo | Pendiente | — | Transporte `log` y `smtp`, cola de mensajes, reintentos. |
@@ -310,7 +310,7 @@ intentos fallidos y el bloqueo posterior, rechazo de la contraseña correcta
 durante el bloqueo, variantes de mayúsculas, usuario inexistente, cierre de
 sesión con y sin token CSRF, y las cuatro combinaciones de rol y ruta.
 
-### Hito 2 — Motor de adjudicación
+### Hito 2 — Motor de adjudicación (`f8844fe`)
 
 La pieza más delicada del proyecto, hecha antes que ninguna pantalla. Cuatro
 modelos, un servicio y una interfaz de validador.

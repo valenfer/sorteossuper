@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<!--
+    Configuracion de phpDocumentor.
+
+    Se llama «.dist» y no «phpDocumentor.xml» a proposito: es la plantilla
+    versionada, la que explica como se genera la documentacion del proyecto. El
+    fichero «phpDocumentor.xml» que cada uno genera en su maquina no se
+    versiona, igual que «config/config.php», porque es una copia local con las
+    rutas absolutas de quien lo ha generado.
+
+    Copiar este fichero como «phpDocumentor.xml» y cambiar las rutas si hace
+    falta, o simplemente pasar las que estan aqui si el proyecto esta donde
+    espera estar.
+
+    La decision D13 deja la documentacion exhaustiva: PHPDoc en toda clase y
+    todo metodo, con las once etiquetas en ingles y la prosa en castellano de
+    Espana. El motivo de que las etiquetas vayan en ingles es que phpDocumentor
+    no reconoce etiquetas en espanol: se generaria una documentacion sin
+    parametros ni tipos de retorno, que es justo lo que se pretendia evitar.
+
+        Generar la documentacion es una sola orden, con la opcion «config»:
+
+        phpdoc -c phpDocumentor.xml
+
+    El verificador de documentacion (bin/verificar_docs.php) comprueba lo mismo
+    que se comprueba aqui, pero sin necesitar phpDocumentor instalado, y
+    ademas busca credenciales y dependencias prohibidas. Es el que se ejecuta en
+    cada instalacion, porque no depende de nada.
+-->
+
+<phpdocumentor
+    configVersion="3"
+    xmlns="https://www.phpdoc.org"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="https://www.phpdoc.org/xsd/phpdoc.xsd">
+
+    <title>Sorteos de supermercado</title>
+
+    <paths>
+        <output>build/docs</output>
+        <cache>build/cache</cache>
+    </paths>
+
+    <!--
+        Solo el codigo de la aplicacion. No se documenta la especificacion, que
+        es un documento de trabajo, ni «config/config.php», que contiene las
+        credenciales reales de la instalacion local. Excluirlo aqui, y no solo
+        al publicar, evita que el fichero exista siquiera en el directorio de
+        trabajo de phpDocumentor.
+    -->
+    <exclude>
+        <directory>build</directory>
+        <directory>config</directory>
+        <directory>storage</directory>
+        <directory>uploads</directory>
+        <directory>assets</directory>
+        <directory>views</directory>
+        <directory>sql</directory>
+        <directory>tests</directory>
+        <file>especificacion_sorteos_supermercado.md</file>
+    </exclude>
+
+    <visibility>public</visibility>
+
+    <default-package-name>Sorteos</default-package-name>
+
+    <include>
+        <directory suffix=".php">app</directory>
+        <directory suffix=".php">bin</directory>
+        <file>index.php</file>
+    </include>
+
+    <parsing>
+        <markup>
+            <code>PHP</code>
+            <encoding>UTF-8</encoding>
+        </markup>
+
+        <!--
+            Las clases de error heredan de RuntimeException y las de control de
+            la peticion, como NoEncontrado o Redirigir, heredan de ErrorAplicacion.
+            Sin esto, phpDocumentor documentaria tambien todos los metodos
+            heredados de las excepciones de PHP, que no son de este proyecto y
+            solo distracten de lo que hay que leer.
+        -->
+        <ignore hidden="true" symfony="true">
+            <attribute>offsetGet</attribute>
+            <attribute>offsetSet</attribute>
+            <attribute>offsetExists</attribute>
+            <attribute>offsetUnset</attribute>
+            <attribute>jsonSerialize</attribute>
+            <attribute>__serialize</attribute>
+            <attribute>__unserialize</attribute>
+            <attribute>__sleep</attribute>
+            <attribute>__wakeup</attribute>
+            <attribute>getMessage</attribute>
+            <attribute>getCode</attribute>
+            <attribute>getFile</attribute>
+            <attribute>getLine</attribute>
+            <attribute>getTrace</attribute>
+            <attribute>getTraceAsString</attribute>
+            <attribute>getPrevious</attribute>
+        </ignore>
+    </parsing>
+
+    <transform>
+        <logger type="progress"/>
+    </transform>
+
+    <reporting>
+        <formats output="yes">
+            <format type="html"/>
+            <format type="text" max-deprecated-entries="50" min-confusion="90"/>
+        </formats>
+        <output>build/logs</output>
+    </reporting>
+
+</phpdocumentor>

@@ -1,0 +1,121 @@
+# =============================================================================
+# Sorteos de supermercado - configuracion de Apache
+# =============================================================================
+#
+# Este fichero controla dos cosas y nada mas:
+#
+#   1. Que la unica puerta de entrada a la aplicacion sea index.php (D5).
+#   2. Que nadie pueda pedir directamente un fichero de codigo, de configuracion
+#      o de datos que deberian quedarse en el disco.
+#
+# Depende de que Apache tenga "AllowOverride All" para este directorio, que es
+# la configuracion por defecto de XAMPP. Si las reglas no funcionan, comprobar
+# ese ajuste antes de seguir investigating el codigo.
+#
+# Referencia de decisiones: D5 (estructura) y D14 (cero dependencias).
+# =============================================================================
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # --- 1. Directorios internos: prohibido entrar por la URL ---------------
+    # Estos directorios contienen codigo PHP que se ejecuta desde el nucleo,
+    # credenciales en config/config.php, el esquema SQL, las pruebas y los
+    # ficheros subidos. Ninguno debe servirse como respuesta HTTP.
+    #
+    # La bandera [F] devuelve 403 Forbidden y detiene el proceso. Es
+    # preferible a [R=404] porque no sugiere que el recurso no existe.
+    RewriteRule ^(app|config|sql|tests|bin|uploads)/ - [F,L]
+
+    # --- 2. Ficheros internos sueltos, en la raiz --------------------------
+    # El .md es la especificacion y si puede leerse, pero el resto de ficheros
+    # de construccion no-interestan y alguno podria filtrar informacion.
+    RewriteRule ^(\.git|\.gitignore|\.gitattributes|phpDocumentor\.xml\.dist|README\.md)$ - [F,L]
+
+    # --- 3. Assets publicos: se sirven tal cual ----------------------------
+    # Los ficheros de assets/css, assets/js y assets/img son los unicos que el
+    # navegador puede leer directamente. La regla [L] los detiene antes de que
+    # lleguen al front controller, porque un .css no debe pasar por PHP.
+    RewriteRule ^assets/ - [L]
+
+    # --- 4. Todo lo demas pasa por el front controller ----------------------
+    # El parametro r recoge la ruta pedida y la resuelve app/Core/Router.php.
+    # Se admiten cadenas de consulta: RewriteRule ^ index.php?r=$0 [QSA,L]
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+# -----------------------------------------------------------------------------
+# Si el modulo de reescritura no esta disponible, la aplicacion sigue siendo
+# funcional en URLs con index.php delante (por ejemplo index.php?r=admin/tramos).
+# En ese caso el administrador debe usar siempre la forma con index.php. Este
+# aviso ayuda a diagnosticar por que las URLs limpias no funcionan.
+# -----------------------------------------------------------------------------
+<IfModule !mod_rewrite.c>
+    <IfModule mod_headers.c>
+        Header set X-SorteosAviso "mod_rewrite no esta activo: use URLs con index.php?r="
+    </IfModule>
+</IfModule>
+
+# =============================================================================
+# Cabeceras de seguridad
+# =============================================================================
+# Referencia: apartado 9 de la especificacion (proteccion de CSRF, escape de
+# salidas, consultas parametrizadas). Aqui se anaden las medidas que
+# corresponden a la capa de servidor web.
+# =============================================================================
+
+<IfModule mod_headers.c>
+    # Evita que el navegador adivine el tipo de contenido de un fichero y que
+    # llegue a interpretarlo como algo ejecutable.
+    Header set X-Content-Type-Options "nosniff"
+
+    # Impide que la aplicacion se incruste en un iframe de otro dominio
+    # (clickjacking). Una tienda puede incrustarla ella misma si lo permite.
+    Header set X-Frame-Options "SAMEORIGIN"
+
+    # No referenciar el panel hacia terceros: las URLs internas de la campana
+    # no aportan nada fuera y si pueden filtrar informacion de la promocion.
+    Header set Referrer-Policy "no-referrer"
+
+    # Politica de contenido basica. No hay CDN (D14), asi que todo el contenido
+    # es local y se puede ser estricto con 'unsafe-inline' para los estilos
+    # calculados del apartado 4.9. Los scripts son ficheros externos locales.
+    Header set Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'self'; base-uri 'self'"
+
+    # La aplicacion no necesita ninguna carga externa ni Workers.
+    Header set Permissions-Policy "geolocation=(), microphone=(), camera=(), interest-cohort=()"
+</IfModule>
+
+# =============================================================================
+# Cache de assets
+# =============================================================================
+# Los assets llevan un parametro de version en su URL, generado desde el
+# contenido del fichero, de modo que se puedan cachear para siempre sin que un
+# cambio en el codigo obligue a la azafata a recargar a mano. Los ficheros que
+# no son assets (vistas, imagenes de la campana) no se cachean nunca.
+# =============================================================================
+
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css                "access plus 1 year"
+    ExpiresByType application/javascript  "access plus 1 year"
+    ExpiresByType image/png               "access plus 1 year"
+    ExpiresByType image/jpeg              "access plus 1 year"
+    ExpiresByType image/webp              "access plus 1 year"
+    ExpiresByType image/svg+xml           "access plus 1 year"
+    ExpiresByType text/html               "access plus 0 seconds"
+</IfModule>
+
+# =============================================================================
+# Limites de subida
+# =============================================================================
+# El limite real de tamano de imagen se controla en la aplicacion (apartado
+# 4.9, validacion de tamano y tipo). Aqui se sube el tope de PHP para que un
+# fichero mayor que el permitido llegue al script y sea rechazado con un
+# mensaje comprensible, en lugar de fallar con un error generico de Apache.
+# =============================================================================
+
+<IfModule mod_php.c>
+    php_value upload_max_filesize 8M
+    php_value post_max_size 10M
+</IfModule>

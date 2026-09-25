@@ -1,0 +1,55 @@
+# =============================================================================
+# Sorteos de supermercado - proteccion del directorio de ficheros subidos
+# =============================================================================
+#
+# Este fichero se aplica a TODO lo que se suba desde el panel de administracion:
+# banners, logotipos, miniaturas de premios e imagenes de resultado. Su unica
+# funcion es comprobar que Apache no los ejecute nunca.
+#
+# Por que hace falta: en el hito 1 de este proyecto se comprobo que la
+# instalacion de XAMPP no dispone de GD ni de Imagick, de modo que las
+# imagenes no se pueden redimensionar ni recodificar antes de guardarlas. La
+# validacion se hace con finfo, getimagesize y una lista blanca de extensiones
+# (apartado 4.9 de la especificacion), pero si un archivo llegase a colarse en
+# esta carpeta con extension .php, estas reglas son la ultima barrera.
+#
+# Referencia: seccion 13.2 del documento de especificacion, "Validacion de
+# imagenes sin GD".
+# =============================================================================
+
+# --- No ejecutar NADA de este directorio -------------------------------------
+# SetHandler none anula cualquier manejador heredado, Included Files, mod_php o
+# mod_perl, y elimina la ejecucion de PHP. Es la proteccion principal.
+<IfModule mod_mime.c>
+    RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pl .py .cgi .asp .jsp
+    RemoveType .php .phtml .php3 .php4 .php5 .php7 .php8 .phps
+    AddType text/plain .php .phtml .php3 .php4 .php5 .php7 .php8 .phps
+</IfModule>
+
+# --- Tampoco interpretarlos como scripts de CGI -----------------------------
+<IfModule mod_cgi.c>
+    Options -ExecCGI -Indexes
+</IfModule>
+
+# --- Y si por lo que sea se pidieran, se niegan con 403 ----------------------
+<FilesMatch "(?i)\.(php|phtml|php[0-9]|phps|pl|py|cgi|asp|aspx|jsp|jar|sh|exe|com|bat|cmd|htaccess)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# --- No listar el contenido del directorio ----------------------------------
+# Un listado expondria los nombres de los ficheros subidos. No hay nada
+# util en el y si mucho que repartir.
+<IfModule mod_autoindex.c>
+    Options -Indexes
+</IfModule>
+
+# --- No heredar permisos de ejecucion ---------------------------------------
+<IfModule mod_mime.c>
+    RemoveHandler .php
+</IfModule>

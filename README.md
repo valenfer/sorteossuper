@@ -5,10 +5,11 @@ supermercado, con un panel de administración y un mostrador para el personal de
 tienda.
 
 El proyecto se construye por hitos, con un commit por hito. **En este momento
-está terminado el hito 1**: el esqueleto de la aplicación, el acceso con
-roles, el instalador, la documentación y la suite de pruebas. Las pantallas de
-gestión todavía son provisionales y lo dicen en pantalla, para que nadie las
-tome por terminadas.
+están terminados los hitos 1 y 2**: el esqueleto de la aplicación, el acceso con
+roles, el instalador, la documentación, la suite de pruebas y el motor de
+adjudicación de premios, que decide quién se lleva cada premio y garantiza que
+ninguna unidad se reparte dos veces. Las pantallas de gestión todavía son
+provisionales y lo dicen en pantalla, para que nadie las tome por terminadas.
 
 **Para trabajar en el proyecto, empieza por [`ESTADO.md`](ESTADO.md)**: dice en
 qué punto está, cómo comprobar que sigue sano, qué hito toca a continuación y
@@ -135,7 +136,7 @@ modo que sirve como paso de integración continua.
 ### Suite de pruebas
 
 ```
-php tests\run.php                    # los cinco casos
+php tests\run.php                    # los ocho casos
 php tests\run.php --caso 0           # solo uno
 php tests\run.php --caso=2 --verbose
 php tests\run.php --ayuda
@@ -148,6 +149,9 @@ php tests\run.php --ayuda
 | 2 | Escapado de salidas, JSON y token CSRF. |
 | 3 | Motor de plantillas, incluida la maquetación anidada. |
 | 4 | Control de acceso por rol. |
+| 5 | Cola de premios: reparto por orden y por hora, y premios que no se entregan antes de su hora. |
+| 6 | Rechazo sin consumir premio, idempotencia del intento y encolado del correo. |
+| 7 | Dos participaciones simultáneas con una sola unidad, en procesos PHP separados. |
 
 La suite no necesita PHPUnit (decisión D6) y
 funciona contra la base de pruebas, nunca contra la de la campaña. Escriben un
@@ -159,6 +163,12 @@ El caso 4 solo puede comprobar la rama de «no hay sesión»: el núcleo da por
 hecho que en la consola no hay nadie, porque `esPeticionWeb()` mira `PHP_SAPI`.
 La rama del rol equivocado necesita una petición web de verdad y se ha
 comprobado a mano contra el servidor.
+
+El caso 7 es el único que lanza otros procesos. Cada uno repite la comprobación
+de que la base de pruebas no se llama igual que la de la campaña, y ambos
+escriben su resultado en un fichero aparte para que no se mezclen: es el único
+sitio del proyecto donde una prueba podría tocar datos de una campaña real, y
+por eso la protección está en los dos lados y no solo en el padre.
 
 ## Configuración
 
@@ -196,16 +206,24 @@ index.php               Front controller único y manejador de excepciones
 app/inicio.php          Arranque previo al autocargador
 app/Core/               Núcleo: configuración, sesiones, rutas, vistas, seguridad
 app/Controllers/        Controladores
-app/Models/             Modelos
+app/Models/             Modelos de las tablas
+app/Services/           Servicios: el motor de adjudicación y el validador de reglas
 views/                  Plantillas PHP
 assets/                 CSS y JavaScript escritos a mano
 sql/                    Esquema y migraciones
 bin/                    Instalador y verificador
 tests/run.php           Suite de pruebas
+tests/_escenario.php    Utilidades de prueba: escenarios y dobles de validador
+tests/_proceso.php      Proceso hijo del caso de concurrencia
 config/                 config.example.php versionado; config.php local
 storage/logs/           Log de errores y log de acceso
 uploads/                Imágenes subidas por el administrador
 ```
+
+Los ficheros de prueba que empiezan por guion bajo están a mano y los salta el
+verificador de documentación a propósito: son andamiaje, no código de la
+aplicación, y el caso de concurrencia necesita su propio proceso porque con una
+sola conexión no habría competencia que medir.
 
 `app/`, `config/`, `sql/`, `tests/`, `bin/` y `uploads/` están bloqueados por el
 `.htaccess` de la raíz. No hace falta tocar la configuración de Apache
@@ -282,7 +300,7 @@ está escrita de una forma y no de otra. El detalle completo está en el apartad
 | D3 | **Identidad de la persona.** Campo clave configurable (DNI, código, ticket, correo o teléfono). Se indexa una huella HMAC-SHA256 con secreto de configuración, nunca el dato en claro. La huella lleva dentro su ámbito, así que un solo índice único cubre «una por campaña», «una por día», «una por ticket» y «una por código». |
 | D4 | **Cola entre días y cierre.** Los premios pendientes pasan al tramo y al día siguiente. Al cerrar la promoción, las unidades no entregadas pasan a `no_entregada`, sin adjudicación retroactiva. Ambas cosas quedan registradas en `auditoria`. |
 | D5 | **Estructura del proyecto.** Front controller en `index.php` con URLs limpias mediante `.htaccess`, que además bloquea el acceso directo a los directorios internos. No requiere modificar la configuración de Apache. |
-| D6 | **Estrategia de pruebas.** Runner propio en PHP CLI, sin Composer ni PHPUnit, con aserciones y contadores. El caso de concurrencia llega en los hitos del motor de adjudicación. |
+| D6 | **Estrategia de pruebas.** Runner propio en PHP CLI, sin Composer ni PHPUnit, con aserciones y contadores. El caso de concurrencia llega en los hitos del motor de adjudicación. **Desviación en el hito 2:** el caso de concurrencia lanza dos procesos PHP de consola con conexiones propias, no dos peticiones HTTP contra Apache, porque hasta el hito 4 no existe ninguna ruta que llame al motor. Lo que se mide, que es la propiedad que importa, es la de la base de datos: dos conexiones compitiendo por la misma unidad. La forma HTTP se añade en el hito 4, cuando la pantalla de participación exista, y solo aporta la capa del servidor web por delante. |
 | D7 | **Zona horaria.** `date_default_timezone_set('Europe/Madrid')` en el arranque, fechas naive en hora local de campaña. No se usa `CONVERT_TZ`, que depende de las tablas de zona horaria de MySQL y no siempre están cargadas. |
 | D8 | **Control de concurrencia.** `GET_LOCK` para serializar la adjudicación de una promoción, `SELECT ... FOR UPDATE` sobre la fila de la unidad y un `UPDATE ... WHERE estado = 'programada'` del que se comprueba el número de filas afectadas. Ese último es el que garantiza por sí solo que una unidad nunca se adjudica dos veces. |
 | D9 | **Modelo de datos.** `unidades_premio` guarda `tramo_id` como referencia autoritativa y un único campo `inicio`. La fecha, la hora y la etiqueta del tramo se derivan al mostrar, de modo que no puede haber datos contradictorios. |
@@ -314,10 +332,19 @@ protección contra fuerza bruta, CSRF, autorización por rol, instalador
 idempotente y con diagnóstico de solo lectura, verificador de documentación,
 suite de pruebas y esta documentación.
 
-**Pendiente.** El motor de adjudicación, el panel de administración, el
-mostrador de la azafata, el envío de correo y los scripts de línea de comandos
-para procesar la cola de mensajes y purgar datos. Las pantallas de destino son
-provisionales y lo indican en pantalla.
+**Terminado (hito 2).** El motor de adjudicación: la cola de premios y su orden
+por fecha y hora, la transacción con bloqueo de promoción, la comprobación del
+número de filas afectadas que hace imposible adjudicar dos veces la misma
+unidad, la idempotencia del intento para que un doble clic no duplique nada, el
+rechazo de los intentos que incumplen una regla sin consumir premio, y el
+encolado del correo de premio y de «no ha salido premio» dentro de la misma
+transacción.
+
+**Pendiente.** El panel de configuración de la promoción, las pantallas de
+participación y de resultado, la implementación de las reglas de la campaña (el
+motor ya acepta un validador y solo falta el validador real), el envío de correo y
+los scripts de línea de comandos para procesar la cola de mensajes y purgar
+datos. Las pantallas de destino son provisionales y lo indican en pantalla.
 
 **Cómo saber si está sano.** Con el servidor arrancado:
 

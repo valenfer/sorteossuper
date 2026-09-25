@@ -53,6 +53,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../app/inicio.php';
+require_once __DIR__ . '/_escenario.php';
 
 use App\Core\Aplicacion;
 
@@ -711,6 +712,510 @@ function caso4(): void
 }
 
 /**
+ * Caso 5: la cola de premios y el reparto por orden.
+ *
+ * Cubre los casos de aceptacion 3 y 4 del apartado 10 de la especificacion, que
+ * son la regla central del apartado 6 escrita como comprobacion.
+ *
+ * QUE SE COMPRUEBA Y POR QUE ESTOS DATOS
+ * ============================================================================
+ *
+ * Se usan las tres horas del ejemplo del apartado 6, porque es el caso que la
+ * especificacion describe palabra por palabra: premios a las 10:12, 10:30 y 11:00,
+ * y la primera participacion llega a las 11:20. Lo que hay que comprobar es que
+ * la de las 11:20 se lleva el de las 10:12, la siguiente el de las 10:30 y la
+ * tercera el de las 11:00.
+ *
+ * El orden importa tanto como el resultado. Una cola que devolviera los premios
+ * al azar daria el numero correcto de ganadoras, y aun asi estaria mal: el
+ * apartado 12 dice que no se presente como aleatorio un resultado que depende de
+ * horarios y de orden de participacion, y una cola desordenada haria que un
+ * premio de las 10:32 se adjudicara antes que uno de las 10:12, que es
+ * exactamente el fallo que el apartado 9 describe.
+ *
+ * @return void
+ */
+function caso5(): void
+{
+    echo 'Caso 5: la cola de premios reparte por orden y por hora', PHP_EOL;
+
+    borrarEscenarioDeAdjudicacion();
+
+    $escenario = crearEscenarioDeAdjudicacion(['10:12:00', '10:30:00', '11:00:00', '12:00:00']);
+    $unidades = $escenario['unidades'];
+
+    $motor = new \App\Services\Adjudicador(new ValidadorQueAcepta());
+
+    // ---- Antes de la hora del primer premio: sin premio --------------------
+    // Caso de aceptacion 3. A las 09:00 no ha llegado ninguna unidad, y una
+    // participacion sin premio no puede haber tocado la cola.
+    $resultado = $motor->registrar(
+        $escenario['promocion'],
+        claveDePrueba('caso5-antes'),
+        $escenario['tramo'],
+        ['nombre' => 'Ana'],
+        null,
+        null,
+        instanteDeHoy('09:00:00')
+    );
+
+    comprobarIgual('sin_premio', $resultado['resultado'], 'Antes de la hora del primer premio el resultado es sin premio');
+    comprobar(
+        $resultado['unidad_id'] === null,
+        'Una participacion sin premio no recibe ninguna unidad'
+    );
+
+    $estados = (new \App\Models\UnidadPremio())->contarPorEstado($escenario['promocion']);
+    comprobarIgual(4, $estados['programada'] ?? 0, 'El intento sin premio no ha consumido ninguna unidad');
+
+    // ---- Tres unidades vencidas: una por participacion, de mas antigua a mas
+    // Caso de aceptacion 4, con el ejemplo del apartado 6.
+    $esperados = [
+        'caso5-1' => $unidades[0],   // la de las 10:12
+        'caso5-2' => $unidades[1],   // la de las 10:30
+        'caso5-3' => $unidades[2],   // la de las 11:00
+    ];
+
+    foreach ($esperados as $semilla => $unidadEsperada) {
+        $resultado = $motor->registrar(
+            $escenario['promocion'],
+            claveDePrueba($semilla),
+            $escenario['tramo'],
+            ['nombre' => 'Cliente ' . $semilla],
+            null,
+            null,
+            instanteDeHoy('11:20:00')
+        );
+
+        comprobarIgual('premio', $resultado['resultado'], 'La participacion ' . $semilla . ' recibe un premio');
+        comprobarIgual(
+            $unidadEsperada,
+            $resultado['unidad_id'],
+            'La participacion ' . $semilla . ' se lleva la unidad que le toca por orden'
+        );
+    }
+
+    // ---- Un premio futuro no se entrega antes de su hora -------------------
+    // El apartado 9 lo pide de forma expresa. Queda una unidad, la de las 12:00,
+    // y por mucho que se insista a las 11:20 no puede salir.
+    $resultado = $motor->registrar(
+        $escenario['promocion'],
+        claveDePrueba('caso5-futuro'),
+        $escenario['tramo'],
+        ['nombre' => 'Cliente con demasiada suerte'],
+        null,
+        null,
+        instanteDeHoy('11:20:00')
+    );
+
+    comprobarIgual(
+        'sin_premio',
+        $resultado['resultado'],
+        'Un premio cuya hora no ha llegado no se entrega antes de su hora'
+    );
+
+    // ---- Y en cuanto llega su hora, se entrega ----------------------------
+    $resultado = $motor->registrar(
+        $escenario['promocion'],
+        claveDePrueba('caso5-futuro-tarde'),
+        $escenario['tramo'],
+        ['nombre' => 'Cliente puntual'],
+        null,
+        null,
+        instanteDeHoy('12:00:00')
+    );
+
+    comprobarIgual('premio', $resultado['resultado'], 'El premio se entrega en cuanto llega su hora exacta');
+    comprobarIgual($unidades[3], $resultado['unidad_id'], 'Se entrega la unidad que quedaba, la de las 12:00');
+
+    // ---- Estado final de la cola -------------------------------------------
+    $estados = (new \App\Models\UnidadPremio())->contarPorEstado($escenario['promocion']);
+    comprobarIgual(4, $estados['entregada'] ?? 0, 'Las cuatro unidades han acabado entregadas');
+    comprobarIgual(0, $estados['programada'] ?? 0, 'No queda ninguna unidad programada');
+
+    $resultados = (new \App\Models\Participacion())->contarPorResultado($escenario['promocion']);
+    comprobarIgual(4, $resultados['premio'] ?? 0, 'Hay cuatro participaciones con premio');
+    comprobarIgual(2, $resultados['sin_premio'] ?? 0, 'Hay dos participaciones sin premio');
+
+    // ---- El codigo de reclamacion ------------------------------------------
+    // Cada unidad lleva el suyo, y son distintos. Es lo que recibe la clienta y
+    // lo que la azafata le entrega, asi que dos clientas con el mismo codigo
+    // seria un fallo grave.
+    $filas = \App\Core\Aplicacion::db()->todos(
+        'SELECT codigo_reclamacion FROM unidades_premio WHERE promocion_id = ?',
+        [$escenario['promocion']]
+    );
+
+    $valores = array_column($filas, 'codigo_reclamacion');
+    comprobarIgual(4, count(array_unique($valores)), 'Cada unidad entregada tiene un codigo de reclamacion distinto');
+    comprobar(
+        count(array_filter($valores, static fn($codigo) => is_string($codigo) && $codigo !== '')) === 4,
+        'Las cuatro unidades tienen un codigo de reclamacion guardado'
+    );
+
+    // ---- El correo se encola, no se envia ----------------------------------
+    // La campana de este caso tiene el correo apagado, y el esquema lo pone por
+    // defecto a proposito. Que no haya ningun mensaje en la cola lo comprueba.
+    comprobarIgual(0, mensajesEnCola($escenario['promocion']), 'Sin correo activado no se encola ningun mensaje');
+
+    borrarEscenarioDeAdjudicacion();
+}
+
+/**
+ * Caso 6: las reglas y el reintento del mismo intento.
+ *
+ * Cubre los casos de aceptacion 5 y 7 del apartado 10, que son los dos que se
+ * apoyan en la clave de idempotencia y en la separacion entre participaciones y
+ * rechazos.
+ *
+ * @return void
+ */
+function caso6(): void
+{
+    echo 'Caso 6: rechazar sin consumir premio y reintentar sin duplicar', PHP_EOL;
+
+    borrarEscenarioDeAdjudicacion();
+
+    $escenario = crearEscenarioDeAdjudicacion(['10:00:00', '10:30:00'], ['correo' => true]);
+    $unidades = $escenario['unidades'];
+
+    // ---- Rechazar sin consumir un premio (caso 5) -------------------------
+    $validador = new ValidadorQueRechaza('duplicado', 'Ya ha participado en esta campana.');
+    $motor = new \App\Services\Adjudicador($validador);
+
+    $resultado = $motor->registrar(
+        $escenario['promocion'],
+        claveDePrueba('caso6-rechazo'),
+        $escenario['tramo'],
+        ['nombre' => 'Ana', 'correo' => 'ana@example.com'],
+        null,
+        null,
+        instanteDeHoy('11:00:00')
+    );
+
+    comprobarIgual('rechazada', $resultado['resultado'], 'Un intento que infringe una regla se rechaza');
+    comprobarIgual('duplicado', $resultado['motivo_codigo'], 'El rechazo guarda el codigo del motivo');
+    comprobar(
+        $resultado['participacion_id'] === null,
+        'Un intento rechazado no se registra como participacion'
+    );
+
+    $estados = (new \App\Models\UnidadPremio())->contarPorEstado($escenario['promocion']);
+    comprobarIgual(2, $estados['programada'] ?? 0, 'Un intento rechazado NO consume ninguna unidad');
+
+    $participaciones = (new \App\Models\Participacion())->contarPorResultado($escenario['promocion']);
+    comprobar(
+        !isset($participaciones['premio']) && !isset($participaciones['sin_premio']),
+        'Un rechazo no deja ninguna participacion registrada'
+    );
+
+    $rechazos = (new \App\Models\IntentoRechazado())->contarPorMotivo($escenario['promocion']);
+    comprobarIgual(1, $rechazos['duplicado'] ?? 0, 'El rechazo queda anotado una sola vez');
+
+    // ---- Un rechazo no guarda los datos de la clienta (decision D10) -------
+    $ip = \App\Core\Aplicacion::db()->todos(
+        'SELECT * FROM intentos_rechazados WHERE promocion_id = ?',
+        [$escenario['promocion']]
+    );
+
+    comprobar(
+        !array_key_exists('datos', $ip[0]),
+        'La tabla de rechazos no tiene columna de datos, porque no se guarda lo que escribio la clienta'
+    );
+
+    // ---- El mismo intento rechazado otra vez (caso 7) ----------------------
+    $llamadasAntes = $validador->llamadas;
+
+    $repetido = $motor->registrar(
+        $escenario['promocion'],
+        claveDePrueba('caso6-rechazo'),
+        $escenario['tramo'],
+        ['nombre' => 'Ana', 'correo' => 'ana@example.com'],
+        null,
+        null,
+        instanteDeHoy('11:00:00')
+    );
+
+    comprobarIgual('rechazada', $repetido['resultado'], 'Un intento rechazado que se repite devuelve el mismo rechazo');
+    comprobar($repetido['repetido'], 'El motor marca la respuesta como repeticion');
+
+    $rechazos = (new \App\Models\IntentoRechazado())->contarPorMotivo($escenario['promocion']);
+    comprobarIgual(1, $rechazos['duplicado'] ?? 0, 'El reintento de un rechazo no genera una segunda fila');
+
+    comprobar(
+        $validador->llamadas === $llamadasAntes,
+        'Un reintento no vuelve a pasar por las reglas, porque el intento ya estaba resuelto'
+    );
+
+    // ---- Ahora una participacion valida, y su reintento --------------------
+    $motor = new \App\Services\Adjudicador(new ValidadorQueAcepta());
+
+    $primera = $motor->registrar(
+        $escenario['promocion'],
+        claveDePrueba('caso6-ok'),
+        $escenario['tramo'],
+        ['nombre' => 'Luis', 'correo' => 'luis@example.com'],
+        null,
+        null,
+        instanteDeHoy('11:00:00')
+    );
+
+    comprobarIgual('premio', $primera['resultado'], 'Un intento valido recibe el premio que le toca');
+    comprobarIgual($unidades[0], $primera['unidad_id'], 'Se lleva la unidad mas antigua de la cola');
+
+    $otraVez = $motor->registrar(
+        $escenario['promocion'],
+        claveDePrueba('caso6-ok'),
+        $escenario['tramo'],
+        ['nombre' => 'Luis', 'correo' => 'luis@example.com'],
+        null,
+        null,
+        instanteDeHoy('11:00:00')
+    );
+
+    comprobarIgual(
+        $primera['participacion_id'],
+        $otraVez['participacion_id'],
+        'Un doble clic devuelve la MISMA participacion y no crea una segunda'
+    );
+
+    comprobarIgual(
+        $primera['unidad_id'],
+        $otraVez['unidad_id'],
+        'Un doble clic devuelve la MISMA unidad y no consume un segundo premio'
+    );
+
+    comprobarIgual(
+        $primera['codigo_reclamacion'],
+        $otraVez['codigo_reclamacion'],
+        'Un doble clic devuelve el mismo codigo de reclamacion'
+    );
+
+    comprobar($otraVez['repetido'], 'El motor marca la segunda llamada como repeticion');
+
+    $estados = (new \App\Models\UnidadPremio())->contarPorEstado($escenario['promocion']);
+    comprobarIgual(1, $estados['entregada'] ?? 0, 'El doble clic no ha entregado una segunda unidad');
+
+    $resultados = (new \App\Models\Participacion())->contarPorResultado($escenario['promocion']);
+    comprobarIgual(1, $resultados['premio'] ?? 0, 'Solo hay una participacion registrada');
+
+    // ---- El correo se encola dentro de la misma transaccion ----------------
+    comprobarIgual(
+        1,
+        mensajesEnCola($escenario['promocion']),
+        'Con correo activado se encola un mensaje por adjudicacion, y ninguno mas por el reintento'
+    );
+
+    $correo = \App\Core\Aplicacion::db()->uno(
+        'SELECT tipo, destinatario, asunto, cuerpo, estado FROM correos WHERE promocion_id = ?',
+        [$escenario['promocion']]
+    );
+
+    comprobarIgual('ganador', $correo['tipo'], 'El mensaje encolado es el de la ganadora');
+    comprobarIgual('luis@example.com', $correo['destinatario'], 'El mensaje va al correo de la participacion');
+    comprobarIgual('pendiente', $correo['estado'], 'El mensaje queda en la cola, sin enviar: el envio es del hito 5');
+    comprobar(
+        strpos((string) $correo['cuerpo'], (string) $primera['codigo_reclamacion']) !== false,
+        'El cuerpo del correo lleva el codigo de reclamacion ya sustituido'
+    );
+    comprobar(
+        strpos((string) $correo['cuerpo'], '{{') === false,
+        'No queda ningun marcador sin sustituir en el correo'
+    );
+
+    // ---- Una clave con formato invalido se rechaza antes de tocar nada -----
+    comprobarFalla(
+        \App\Core\ErrorValidacion::class,
+        static function () use ($motor, $escenario): void {
+            $motor->registrar(
+                $escenario['promocion'],
+                "'; DROP TABLE participaciones; --",
+                $escenario['tramo'],
+                ['nombre' => 'Atacante'],
+                null,
+                null,
+                instanteDeHoy('11:00:00')
+            );
+        },
+        'Una clave de idempotencia con formato invalido se rechaza con un error de validacion'
+    );
+
+    comprobar(
+        (int) \App\Core\Aplicacion::db()->valor('SELECT COUNT(*) FROM unidades_premio') > 0,
+        'La tabla de unidades sigue en pie despues del intento de inyeccion'
+    );
+
+    borrarEscenarioDeAdjudicacion();
+}
+
+/**
+ * Caso 7: dos participaciones simultaneas con una sola unidad.
+ *
+ * Cubre el caso de aceptacion 6, y es el unico caso de la suite que necesita
+ * procesos de verdad. Ver el comentario de tests/_proceso.php para que no se puede
+ * comprobar en un solo proceso.
+ *
+ * ============================================================================
+ * QUE SE COMPRUEBA
+ * ============================================================================
+ *
+ * Dos procesos con conexiones propias intentan participar en el mismo instante,
+ * con una sola unidad disponible. Exactamente uno debe recibir el premio, el otro
+ * debe quedarse sin premio, y en la tabla de unidades debe haber exactamente una
+ * fila entregada.
+ *
+ * Las tres comprobaciones importan. Si los dos recibieran premio, la tercera
+ * detectaria que hay dos unidades entregadas aunque solo habia una. Si los dos
+ * quedaran sin premio, habria un premio que no se ha entregado a nadie. Y si solo
+ * uno recibiera el premio pero quedaran dos participaciones con resultado «premio»,
+ * la contabilidad de la campana no cuadraria aunque el reparto de premios fuera
+ * correcto, que es justo lo que el apartado 6 pide evitar.
+ *
+ * @return void
+ */
+function caso7(): void
+{
+    echo 'Caso 7: dos participaciones simultaneas con una sola unidad', PHP_EOL;
+
+    borrarEscenarioDeAdjudicacion();
+
+    // Una sola unidad, y dos claves de intento distintas: no es un reintento del
+    // mismo intento, son dos personas distintas.
+    $escenario = crearEscenarioDeAdjudicacion(['10:00:00']);
+
+    $ficheroHijo = __DIR__ . '/_proceso.php';
+    $directorio = sys_get_temp_dir();
+    $salidas = [
+        $directorio . '/sorteos-concurrencia-1.json',
+        $directorio . '/sorteos-concurrencia-2.json',
+    ];
+
+    // Los ficheros de la ejecucion anterior podrian quedar si el proceso padre se
+    // matase a mitad. Se borran antes de nada, para no leer un resultado viejo y
+    // darlo por bueno.
+    foreach ($salidas as $salida) {
+        if (is_file($salida)) {
+            @unlink($salida);
+        }
+    }
+
+    $config = \App\Core\Aplicacion::config();
+    $basePruebas = (string) $config['bd']['nombre'];
+
+    $procesos = [];
+
+    foreach ($salidas as $indice => $salida) {
+        $orden = [
+            PHP_BINARY,
+            $ficheroHijo,
+            $basePruebas,
+            $salida,
+            claveDePrueba('caso7-persona-' . $indice),
+            instanteDeHoy('11:00:00'),
+            (string) $escenario['tramo'],
+        ];
+
+        $mandos = proc_open(
+            $orden,
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $tuberias
+        );
+
+        comprobar(
+            is_resource($mandos),
+            'Se ha podido lanzar el proceso ' . ($indice + 1) . ' de la prueba de concurrencia'
+        );
+
+        if (!is_resource($mandos)) {
+            continue;
+        }
+
+        $procesos[$indice] = ['mandos' => $mandos, 'tuberias' => $tuberias];
+    }
+
+    // Se recoge la salida de los dos antes de esperar, para que ningun proceso se
+    // quede bloqueado escribiendo en una tuberia que nadie lee.
+    $errores = [];
+
+    foreach ($procesos as $indice => $proceso) {
+        $errores[$indice] = (string) stream_get_contents($proceso['tuberias'][1])
+            . (string) stream_get_contents($proceso['tuberias'][2]);
+
+        fclose($proceso['tuberias'][1]);
+        fclose($proceso['tuberias'][2]);
+    }
+
+    foreach ($procesos as $proceso) {
+        proc_close($proceso['mandos']);
+    }
+
+    // ---- Que los dos procesos hayan terminado bien ------------------------
+    $lecturas = [];
+
+    foreach ($salidas as $indice => $salida) {
+        $contenido = is_file($salida) ? trim((string) file_get_contents($salida)) : '';
+        $lecturas[$indice] = $contenido === '' ? null : json_decode($contenido, true);
+
+        comprobar(
+            is_array($lecturas[$indice]) && !empty($lecturas[$indice]['ok']),
+            'El proceso ' . ($indice + 1) . ' ha terminado y ha escrito su resultado',
+            $lecturas[$indice] === null
+                ? 'no ha escrito nada. Su salida fue: ' . ($errores[$indice] ?? '(sin salida)')
+                : json_encode($lecturas[$indice])
+        );
+
+        if (is_file($salida)) {
+            @unlink($salida);
+        }
+    }
+
+    if (in_array(null, $lecturas, true)) {
+        // Si un proceso no ha llegado a escribir, no tiene sentido comprobar los
+        // repartos: darian verde por falta de datos y no porque el motor funcione.
+        // Se dice por pantalla y se sale del caso con los fallos ya anotados.
+        comprobar(false, 'Sin los dos resultados no se puede comprobar el reparto');
+        borrarEscenarioDeAdjudicacion();
+        return;
+    }
+
+    $resultados = array_column(array_column($lecturas, 'resultado'), 'resultado');
+
+    comprobarIgual(
+        1,
+        count(array_keys($resultados, 'premio', true)),
+        'De las dos participaciones simultaneas, solo UNA recibe el premio'
+    );
+
+    comprobarIgual(
+        1,
+        count(array_keys($resultados, 'sin_premio', true)),
+        'La otra participacion se queda sin premio, en vez de desaparecer'
+    );
+
+    comprobarIgual(2, count($resultados), 'Los dos procesos han respondido');
+
+    // ---- Y la tabla de unidades lo confirma --------------------------------
+    $estados = (new \App\Models\UnidadPremio())->contarPorEstado($escenario['promocion']);
+    comprobarIgual(1, $estados['entregada'] ?? 0, 'Hay exactamente UNA unidad entregada de la que habia');
+    comprobarIgual(0, $estados['programada'] ?? 0, 'No queda ninguna unidad programada');
+
+    $resultadosDeLaCampana = (new \App\Models\Participacion())->contarPorResultado($escenario['promocion']);
+    comprobarIgual(1, $resultadosDeLaCampana['premio'] ?? 0, 'Solo una participacion queda con resultado «premio»');
+    comprobarIgual(1, $resultadosDeLaCampana['sin_premio'] ?? 0, 'La otra queda con resultado «sin premio»');
+
+    // Las dos participaciones tienen que ser de dos personas distintas, que es lo
+    // que distingue este caso del de un doble clic.
+    $claves = (int) \App\Core\Aplicacion::db()->valor(
+        'SELECT COUNT(DISTINCT clave_idempotencia) FROM participaciones WHERE promocion_id = ?',
+        [$escenario['promocion']]
+    );
+
+    comprobarIgual(2, $claves, 'Las dos participaciones vienen de dos intentos distintos');
+
+    borrarEscenarioDeAdjudicacion();
+}
+
+/**
  * Lista de casos disponibles, indexada por numero.
  *
  * @var array<int, callable():void>
@@ -721,6 +1226,9 @@ const PRUEBAS = [
     2 => 'caso2',
     3 => 'caso3',
     4 => 'caso4',
+    5 => 'caso5',
+    6 => 'caso6',
+    7 => 'caso7',
 ];
 
 // -----------------------------------------------------------------------------
@@ -816,7 +1324,9 @@ try {
     echo '[FALLO] No se pudo apuntar a la base de pruebas: ', $e->getMessage(), PHP_EOL;
     echo '         Ejecuta antes: php bin\\instalar.php --test', PHP_EOL;
     exit(1);
-}$inicio = microtime(true);
+}
+
+$inicio = microtime(true);
 $totalFallos = 0;
 $totalPasadas = 0;
 

@@ -52,7 +52,7 @@
  *
  * El tercero, y mas importante, no esta aqui porque depende de cada tabla: es
  * el UPDATE ... WHERE estado = 'programada' cuya fila afectada se comprueba. Ver
- * el detalle en \App\Services\Adjudicador, que se implementa en el hito 6.
+ * el detalle en \App\Services\Adjudicador, que se implementa en el hito 2.
  *
  * ============================================================================
  * SOBRE EL USO DE GET_LOCK
@@ -484,6 +484,27 @@ class Db
      * 5 porque una cola de tablet no debe quedarse esperando mas: si en cinco
      * segundos no se concede, es preferible decir «intente de nuevo» que dejar
      * la pantalla congelada con cara de error.
+     *
+     * ============================================================================
+     * POR QUE EL NOMBRE NO ES EL LITERAL DE LA DECISION D8
+     * ============================================================================
+     *
+     * D8 escribe GET_LOCK('sorteo:{id}', 5). Aqui el nombre es
+     * «sorteos:adjudicacion:{id}», y conviene decir por que no es una
+     * contradiccion.
+     *
+     * Lo que D8 fija es que el bloqueo sea POR PROMOCION y que espere cinco
+     * segundos, y eso es justo lo que hace este metodo: {id} es el
+     * identificador de la promocion, no el de la unidad de premio. Ese es el
+     * punto de la decision, y es lo que evita que dos tablets repartiendo
+     * premios distintos de la misma campana se estorben.
+     *
+     * El nombre literal se ha alargado por un motivo tecnico que no aparece en
+     * la especificacion: GET_LOCK usa un espacio de nombres GLOBAL del servidor
+     * de MariaDB, no de la base de datos. Si este proyecto llegara a compartir
+     * servidor con otra aplicacion, un «sorteo:1» PODria colisionar con el
+     * «sorteo:1» de la otra, y el bloqueo cruzaria campanas de dos programas
+     * que no se conocen. El prefijo lo hace imposible. Ver PREFIJO_BLOQUEO.
      *
      * @param int $promocionId Identificador de la promocion cuyo bloqueo se
      *                         solicita. El nombre real es

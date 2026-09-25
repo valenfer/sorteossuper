@@ -21,7 +21,7 @@ configura la promoción y el personal de tienda registra las participaciones.
 | --- | --- | --- | --- |
 | 0. Especificación | Terminado | `fcf6770` | Addendum D1–D19 y las 19 decisiones de implementación. |
 | 1. Base y acceso | Terminado | `8c0baf5` | Núcleo, sesiones, rutas, vistas, acceso por roles, instalador, verificador, pruebas, README. |
-| 2. Motor de adjudicación | **Pendiente** | — | Cola de premios, transacción con bloqueo, evita adjudicaciones dobles. |
+| 2. Motor de adjudicación | Terminado | — | Cola de premios, transacción con bloqueo, evita adjudicaciones dobles. |
 | 3. Configuración de la promoción | Pendiente | — | Panel del administrador: días, tramos, tipos de premio, cantidades, calendario. |
 | 4. Participaciones | Pendiente | — | Registro por la azafata, reglas, identidad, las tres pantallas. |
 | 5. Correo | Pendiente | — | Transporte `log` y `smtp`, cola de mensajes, reintentos. |
@@ -48,8 +48,8 @@ Lo que se espera ahora mismo, exactamente:
 
 | Comprobación | Resultado esperado |
 | --- | --- |
-| `verificar_docs.php` | `Todo correcto: 23 ficheros, sin problemas` |
-| `tests\run.php` | `Todo correcto: 5 casos ejecutados, 83 comprobaciones` |
+| `verificar_docs.php` | `Todo correcto: 29 ficheros, sin problemas` |
+| `tests\run.php` | `Todo correcto: 8 casos ejecutados, 141 comprobaciones` |
 | `instalar.php --diagnostico` | `Diagnostico terminado`, sin ninguna escritura |
 | `instalar.php` | Idempotente: se puede repetir sin romper nada |
 | `/login` | 200 |
@@ -69,9 +69,23 @@ enrutador con URLs limpias, motor de vistas con escapado obligatorio, acceso con
 dos roles, bloqueo por intentos fallidos, CSRF, instalador idempotente,
 verificador de documentación, suite de pruebas y documentación.
 
+**Hecho (hito 2).** El motor de adjudicación: la cola de premios, la transacción
+con las tres defensas contra la adjudicación doble, la idempotencia del intento,
+el rechazo de intentos que incumplen una regla, y el encolado del correo. Ver la
+sección 5.
+
 **Las 15 tablas del esquema ya existen** (`sql/schema.sql`), incluida la de
 participaciones, la de cola de correos y la de auditoría. El modelo de datos
-está, la lógica que las usa no.
+está, y el motor que usa las cuatro tablas centrales también.
+
+**Las pantallas de destino son provisionales** y lo dicen en pantalla. No hay
+todavía ninguna pantalla de configuración, de participaciones ni de resultados:
+lo único que hay es la de acceso del hito 1.
+
+**En la raíz hay un `bbdd.png` con un diagrama de la base de datos hecho a
+mano.** Es una referencia personal y **no se versiona a propósito**, así que
+`git status` lo seguirá mostrando como `?? bbdd.png` mientras siga ahí. No
+borrarlo, moverlo ni modificarlo sin preguntar.
 
 **Las pantallas de destino son provisionales** y lo dicen en pantalla. No hay
 todavía ninguna pantalla de configuración, de participaciones ni de resultados.
@@ -83,7 +97,7 @@ más afectan a lo que viene:
 
 | Decisión | Por qué importa a la hora de escribir código |
 | --- | --- |
-| **D8** Concurrencia | `GET_LOCK('sorteo:{id}', 5)`, `SELECT ... FOR UPDATE` sobre la unidad y un `UPDATE ... WHERE estado = 'programada'` del que se comprueba el número de filas afectadas. El último es el que garantiza por sí solo que una unidad nunca se adjudica dos veces. No usar `SKIP LOCKED`: no existe en MariaDB 10.4. |
+| **D8** Concurrencia | Bloqueo con nombre por promoción, `SELECT ... FOR UPDATE` sobre la unidad y un `UPDATE ... WHERE estado = 'programada'` del que se comprueba el número de filas afectadas. El último es el que garantiza por sí solo que una unidad nunca se adjudica dos veces. No usar `SKIP LOCKED`: no existe en MariaDB 10.4. **Desviación consciente:** el nombre real del bloqueo es `sorteos:adjudicacion:{id}` y no el literal `sorteo:{id}` de la decisión. `{id}` sigue siendo el de la promoción y la espera sigue siendo de 5 segundos, que es lo que D8 fija; lo que se alarga es el nombre, porque `GET_LOCK` usa un espacio de nombres global del servidor y un `sorteo:1` PODría colisionar con el de otra aplicación en el mismo MariaDB. Ver el comentario de `Db::bloquearPromocion()`. |
 | **D3** Identidad | Huella `HMAC-SHA256` con secreto de configuración, nunca el dato en claro. La huella lleva dentro su ámbito, así que un único índice cubre «una por campaña», «una por día», «una por ticket» y «una por código». |
 | **D10** Separación | `participaciones` solo contiene participaciones válidas y es la única tabla con índices únicos. Los rechazos van a `intentos_rechazados`, sin índice único, para que un rechazo no bloquee a nadie. |
 | **D4** Cola y cierre | Los premios pendientes pasan al tramo y al día siguiente. Al cerrar, las unidades no entregadas pasan a `no_entregada`, sin adjudicación retroactiva. |
@@ -92,49 +106,82 @@ más afectan a lo que viene:
 | **D9** Modelo de datos | `unidades_premio` guarda `tramo_id` como referencia autoritativa y un único `inicio`. La fecha, la hora y la etiqueta del tramo se derivan al mostrar. |
 | **D1** Correo | Interfaz `Mailer` con transportes `log` y `smtp`. Los mensajes se encolan dentro de la transacción de adjudicación y se envían después: un fallo de envío nunca revierte la adjudicación. |
 | **D14** Cero dependencias | Ni Composer, ni PHPUnit, ni jQuery, ni CDN. El verificador falla si aparece una URL externa, un `require` fuera del proyecto o un `composer.json`. |
+| **D6** Pruebas | Runner propio en PHP CLI, sin Composer ni PHPUnit (D14). El caso de concurrencia **se ha resuelto de otra manera en el hito 2**: la especificación pide dos peticiones HTTP simultáneas contra Apache, y hasta el hito 4 no hay ninguna ruta que llame al motor. Ahora lanza dos procesos PHP de consola con conexiones propias. Se mide lo mismo: dos conexiones compitiendo por la misma unidad. La forma HTTP se añade en el hito 4 y solo añade la capa del servidor web. |
 | **D13** Documentación | PHPDoc en toda clase y método, con las once etiquetas en inglés y la prosa en castellano. El verificador lo comprueba. |
 
-## 5. El siguiente hito: motor de adjudicación
+## 5. El hito 2: motor de adjudicación
 
-Es el más delicado del proyecto y conviene hacerlo antes que nada de interfaz,
+Es el más delicado del proyecto y se ha hecho antes que nada de interfaz,
 porque es el único cuyo error no se ve en la pantalla y se descubre más tarde.
 
-**Cubre** el apartado 6 de la especificación y los casos 5, 6 y 7 del apartado 10.
+**Cubre** el apartado 6 de la especificación y los casos de aceptación 3, 4, 5,
+6 y 7 del apartado 10.
 
-**Lo que hay que construir.**
+**Lo que hay construido.**
 
-1. Consultar la primera unidad pendiente cuya hora programada sea anterior o
-   igual al instante de la participación, dentro de una transacción.
-2. Si existe, adjudicarla una sola vez y marcarla como entregada.
-3. Si no existe, registrar la participación como «sin premio».
-4. Los premios sobrantes siguen en cola, ordenados por fecha y hora, con un
-   identificador estable para desempatar.
-5. Un intento inválido no consume premios.
-6. Referencia inmutable entre la participación ganadora y la unidad adjudicada,
-   con la fecha y hora reales.
+| Fichero | Qué hace |
+| --- | --- |
+| `app\Models\UnidadPremio.php` | La cola. Lee la primera unidad pendiente con `inicio <= momento` ordenada por `inicio, id`, y la entrega con un `UPDATE` condicional del que devuelve el número de filas afectadas. Sortea además el código de reclamación. |
+| `app\Models\Participacion.php` | Participaciones válidas, incluida la búsqueda por clave de idempotencia que convierte un doble clic en una no-operación. |
+| `app\Models\IntentoRechazado.php` | Intentos rechazados, sin datos de la clienta y sin ningún índice único que pueda bloquear a nadie (D10). |
+| `app\Models\Correo.php` | Encola el mensaje dentro de la transacción con sustitución de marcadores por lista blanca. Encolar, no enviar: el envío es del hito 5. |
+| `app\Services\ValidadorReglas.php` | La interfaz del validador. La implementa de verdad el hito 4. |
+| `app\Services\Adjudicador.php` | El motor. Bloquea la promoción, abre la transacción y aplica el algoritmo del apartado 6 paso a paso. |
 
-**Los tres casos de aceptación que lo cierran** (apartado 10):
+**El algoritmo, en orden.** Lo primero es mirar si el intento ya se resolvió, para
+que un doble clic no consuma un segundo premio. Después se consulta el validador
+inyectado, y si rechaza se escribe el rechazo y se sale sin haber tocado la cola.
+Solo si acepta se mira la cola, y solo entonces se toca `unidades_premio`. La
+comparación de la hora es «menor o igual», no «menor»: en la hora exacta en que
+un premio queda disponible, ese premio ya se puede repartir.
 
-- Registrar una persona que infringe una regla activa: rechazarla sin consumir
-  una unidad.
-- Dos participaciones simultáneas con una sola unidad disponible: solo una
-  recibe el premio.
-- Repetir la petición de un mismo intento por doble clic o recarga: el mismo
-  resultado, sin duplicar participación ni premio.
+**Las tres defensas contra la adjudicación doble, y por qué están las tres.**
+La primera es el bloqueo con nombre de la promoción. La segunda, el `FOR UPDATE`
+sobre la fila de la unidad. La tercera, el `UPDATE ... WHERE estado = 'programada'`
+con comprobación de filas afectadas, que es la que sigue valiendo aunque alguien
+olvide las otras dos. El motor reintenta con la siguiente unidad si la entrega sale
+con cero filas, y si tampoco lo consigue lanza un error en vez de fingir que no
+había premio: decir «sin premio» cuando había uno y no se ha podido entregar es
+como se pierde un premio sin que nadie lo sepa.
 
-**Decisiones que hay que tomar antes de escribir código.**
+**Decisión cerrada: el motor valida, con la regla inyectada.** El motor recibe un
+validador de reglas y es el único que decide. Así la garantía de que **ninguna
+participación inválida consume un premio** queda dentro del motor y la comprueba
+una prueba, en vez de depender de que el controlador llame a la operación
+correcta. En el hito 2 el validador es un doble que permite o rechaza a voluntad,
+y el hito 4 solo tiene que implementar la interfaz: es puramente aditivo, no hay
+que tocar el motor.
 
-- Cómo se representa el instante de la participación. Sestores de la
-  participación comparan contra `unidades_premio.inicio`, que es naive; el
-  reloj lo pone `Aplicacion::ahora()`, que ya aplica `Europe/Madrid`.
-- Si el bloqueo se toma con `GET_LOCK` por promoción o por unidad. Por
-  promoción es más simple y es lo que dice D8; por unidad permite más
-  concurrencia.
-- Cómo se detecta el reintento del mismo intento (caso 7). La clave más
-  probable es el `id` que genera el navegador al abrir la pantalla 1 y que
-  viaja hasta el resultado, de forma que el segundo clic llega con el mismo id.
-- Qué se considera «fuera de horario activo». La especificación lo deja como
-  supuesto configurable, no como regla firme.
+**Los casos de aceptación que lo cierran y dónde están cubiertos** (apartado 10):
+
+| Caso | Qué exige | Dónde se comprueba |
+| --- | --- | --- |
+| 3 | Participar antes de la hora del primer premio | Caso 5 |
+| 4 | Tres unidades vencidas se reparten por orden de hora | Caso 5 |
+| 5 | Una regla incumplida se rechaza sin consumir unidad | Caso 6 |
+| 6 | Dos participaciones simultáneas, una sola unidad | Caso 7 |
+| 7 | Repetir un mismo intento no duplica nada | Caso 6 |
+
+**El caso 6 necesita dos procesos de verdad, y no es un detalle.** Con una sola
+conexión no hay competencia, el bloqueo se concede siempre a la primera llamada y
+la prueba pasaría sin comprobar nada. Por eso `tests/_proceso.php` se lanza dos
+veces como proceso independiente, con conexiones propias. Cada uno repite la
+comprobación de que la base de pruebas no se llama igual que la de la campaña, que
+en `tests/run.php` es la comprobación principal: es el único punto del proyecto
+donde una prueba podría escribir en la base de un supermercado real.
+
+**Dos cosas que se encontraron al escribir las pruebas y que conviene no
+olvidar.** La primera, que el esquema **no permite borrar una promoción con un
+solo `DELETE`**: `fk_unidades_tipo` y `fk_participaciones_tramo` son
+`ON DELETE RESTRICT`, así que la cascada se bloquea a mitad. La limpieza de las
+pruebas borra tabla por tabla en el orden que imponen esas dos restricciones, y el
+comentario de `tests/_escenario.php` explica por qué. La segunda, que
+`asignaciones_tramo` no tiene `promocion_id`: se llega a ella por el tramo.
+
+**Queda pendiente de confirmar por el promotor** (no bloquea el hito 2): la
+política de que los premios pendientes pasen al tramo y al día siguiente es un
+supuesto de la especificación, y el apartado 6 pide confirmarla antes de una
+campaña real. Ver la sección 6.
 
 ## 6. Riesgos y limitaciones abiertas
 
@@ -163,6 +210,9 @@ encontrados:
   las peticiones web y registra un aviso en stderr si se llama de otro sitio.
 - **`config/config.php` no se versiona.** Va con credenciales y con el secreto
   de HMAC. Está en el `.gitignore`.
+- **`bbdd.png` no se versiona.** Es un diagrama personal del usuario, no
+  documentación del proyecto. Que aparezca como `?? bbdd.png` en `git status`
+  es lo esperado, no un descuido pendiente de limpiar.
 - **Una retirada por commit y un commit por hito.** El mensaje cita las
   decisiones afectadas, como el del hito 0.
 - **Cero dependencias externas** (D14). El verificador falla si aparece una URL
@@ -259,3 +309,50 @@ verdad, verificado con el log general de consultas.
 intentos fallidos y el bloqueo posterior, rechazo de la contraseña correcta
 durante el bloqueo, variantes de mayúsculas, usuario inexistente, cierre de
 sesión con y sin token CSRF, y las cuatro combinaciones de rol y ruta.
+
+### Hito 2 — Motor de adjudicación
+
+La pieza más delicada del proyecto, hecha antes que ninguna pantalla. Cuatro
+modelos, un servicio y una interfaz de validador.
+
+**Decisiones tomadas aquí.**
+
+- **El motor valida y el validador se inyecta.** Lo pidió el promotor y evita
+  que la garantía de «ninguna participación inválida consume un premio» dependa
+  de que el controlador llame a la operación correcta. El hito 4 solo tiene que
+  implementar `ValidadorReglas`.
+- **El nombre del bloqueo se ha alargado** a `sorteos:adjudicacion:{id}` en lugar
+  del literal `sorteo:{id}` de D8. `{id}` sigue siendo el identificador de la
+  promoción y la espera sigue siendo de cinco segundos; lo que cambia es el
+  nombre, porque `GET_LOCK` es global al servidor. Queda anotado como desviación
+  consciente en la sección 4.
+- **El correo se encola aquí, no en el hito 5.** Es lo que pide D1, y la razón
+  para separarlo está en el comentario de `app\Models\Correo.php`.
+- **El caso de concurrencia no va por HTTP.** D6 lo pide, y no se ha hecho así:
+  hasta el hito 4 no existe ninguna ruta que llame al motor, así que no hay nada
+  a lo que lanzar dos peticiones. Se lanza dos procesos PHP de consola con
+  conexiones propias, que es donde está la propiedad que importa. Queda
+  anotado como desviación en la sección 4 y en el README.
+
+**Fallos que aparecieron al escribir las pruebas y que no se habrían visto
+después.**
+
+- `valoresPara()` no pasaba la dirección de correo al modelo de correo, que la
+  busca para saber a quién escribir. Con el correo activado, `ErrorValidacion`
+  salía de dentro de la transacción y la adjudicación entera se deshacía: ni
+  premio, ni participación, ni correo. Ahora la dirección viaja en el array de
+  valores pero **no** entra en la lista de marcadores, así que nunca aparece en
+  el texto.
+- El esquema **no permite borrar una promoción con un solo `DELETE`**, porque
+  `fk_unidades_tipo` y `fk_participaciones_tramo` son `RESTRICT`. La limpieza de
+  las pruebas lo hace tabla por tabla respetando ese orden.
+- `bin\verificar_docs.php --caso 7` ejecutaba el caso **1**: el parser solo
+  aceptaba `--caso=7`, y sin el igual la opción valía `true`, que convertido a
+  entero es 1. Ahora se rechaza y se dice por qué.
+
+**Cómo se comprobó.** 141 comprobaciones en 8 casos. El caso 5 cubre los casos de
+aceptación 3 y 4 con las tres horas del ejemplo del apartado 6; el caso 6, el 5 y
+el 7; y el caso 7 lanza dos procesos PHP independientes con conexiones propias
+sobre una sola unidad, y comprueba que uno gana, el otro no, y que en la tabla
+queda exactamente una unidad entregada. También se comprobó a mano que el proceso
+hijo **se niega a arrancar** si se le pasa el nombre de la base de la campaña.

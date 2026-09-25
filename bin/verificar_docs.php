@@ -268,6 +268,41 @@ const CASOS = [
             'El contenido de la vista aparece dentro de la maquetacion.',
         ],
     ],
+    4 => [
+        'titulo' => 'El control de acceso por rol',
+        'pasos'  => [
+            'Desde la consola no se considera una peticion web ni hay usuario.',
+            'Pedir una pantalla privada sin sesion redirige al acceso.',
+            'Los intentos denegados se anotan en el log de acceso y la prueba lo deja como estaba.',
+        ],
+    ],
+    5 => [
+        'titulo' => 'La cola de premios reparte por orden y por hora',
+        'pasos'  => [
+            'Antes de la hora del primer premio el resultado es sin premio y no se consume nada.',
+            'Tres unidades vencidas se reparten una por participacion, de la mas antigua a la mas reciente.',
+            'Un premio cuya hora no ha llegado no se entrega, y en cuanto llega se entrega.',
+            'Las unidades entregadas tienen codigos de reclamacion distintos.',
+        ],
+    ],
+    6 => [
+        'titulo' => 'Rechazar sin consumir premio y reintentar sin duplicar',
+        'pasos'  => [
+            'Un intento que infringe una regla se rechaza y no consume ninguna unidad.',
+            'La tabla de rechazos no guarda los datos de la clienta.',
+            'Un reintento del mismo intento devuelve el mismo resultado y no genera filas nuevas.',
+            'Con correo activado se encola un mensaje por adjudicacion y ninguno mas por el reintento.',
+            'Una clave de idempotencia con formato invalido se rechaza antes de tocar la base de datos.',
+        ],
+    ],
+    7 => [
+        'titulo' => 'Dos participaciones simultaneas con una sola unidad',
+        'pasos'  => [
+            'Dos procesos con conexiones propias intentan participar a la vez.',
+            'De los dos intentos, solo uno recibe el premio y el otro se queda sin premio.',
+            'Hay exactamente una unidad entregada de las que habia.',
+        ],
+    ],
 ];
 
 /**
@@ -1293,8 +1328,8 @@ function ayuda(): void
     linea('');
     linea('Uso: php bin\\verificar_docs.php [opciones]');
     linea('');
-    linea('  --caso N   Ejecuta tambien los casos de la suite de pruebas.');
-    linea('            Por ejemplo --caso 0 para el arranque y el esquema.');
+    linea('  --caso=N   Ejecuta tambien el caso N de la suite de pruebas.');
+    linea('            Por ejemplo --caso=0 para el arranque y el esquema.');
     linea('  --ayuda    Muestra esta ayuda.');
     linea('');
     linea('Codigo de salida: 0 si todo esta bien, 1 si hay algun error.');
@@ -1422,7 +1457,20 @@ $codigoSalida = verificarTodo($raiz);
 // El caso de pruebas se ejecuta despues, para que el informe de documentacion
 // se pueda leer antes de que la suite empiece a escribir en la base de pruebas.
 if (isset($argumentos['caso'])) {
-    $caso = (int) $argumentos['caso'];
+    $caso = $argumentos['caso'];
+
+    // El valor tiene que ser un numero. Sin esta comprobacion, «--caso 7» sin
+    // el igual llega aqui como true, y (int) true es 1: el script ejecutaria el
+    // caso 1 en lugar del 7 y lo diria con toda normalidad. Una prueba que se
+    // ejecuta sin ser la que se ha pedido, y sale verde, es peor que no
+    // ejecutar ninguna.
+    if (!is_string($caso) || !ctype_digit($caso)) {
+        linea('');
+        linea('El caso debe ser un numero, escrito con el igual: --caso=7');
+        exit(1);
+    }
+
+    $caso = (int) $caso;
 
     if (!isset(CASOS[$caso])) {
         linea('');

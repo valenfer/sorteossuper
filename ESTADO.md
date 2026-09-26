@@ -456,3 +456,49 @@ calendario, reparto y configuración). `bin/verificar_docs.php` sobre 58 fichero
 sin un solo problema. Y un guion de humo que pinta las once pantallas midiendo
 los bytes que escribe, porque una vista que revienta en el navegador no la detecta
 ninguna prueba de las anteriores.
+
+### Hito 4 — Participación y resultados
+
+**Qué hay que construir.**
+
+- **Pantalla de participación.** Desde la ficha de una campaña activa (o un botón
+  «Participar» en la zona de la azafata), un formulario que pide los datos de
+  contacto (DNI, número de ticket, correo opcional) y un campo de código de
+  participación si la regla así lo requiere. El envío se hace por POST con token
+  CSRF; el servidor llama a `Adjudicador::registrarParticipacion()` y devuelve
+  un resultado (`premio`, `sin_premio` o `rechazada`). El aviso al usuario es
+  legible y no muestra datos de otras clientas.
+
+- **Pantalla de resultado.** Después de participar, se muestra la consecuencia:
+  si le corresponde un premio, los datos del mismo (nombre, descripción); si no,
+  un mensaje de consuelo. En modo simulación el resultado se muestra al instante;
+  en modo real el premio se adjudica en la misma transacción.
+
+**Decisiones y detalles.**
+
+- **CSRF obligatorio.** Al igual que en el panel, cada petición de participación
+  debe llevar un token CSRF válido; sin él se devuelve un error 403.
+- **Validación del lado del servidor.** Los campos obligatorios los impone el
+  servidor (`ConfiguracionPromocion::CAMPOS_OBLIGATORIOS`); el navegador `required`
+  se usa solo como ayuda visual, igual que en el formulario de campana.
+- **Idempotencia por clave.** Si la misma clienta envía dos veces con la misma
+  clave idempotencia, la segunda se ignora y se devuelve la misma participación
+  ya registrada. El doble clic no duplica nada.
+- **Sin JavaScript.** El formulario y la vista de resultado funcionan sin
+  JavaScript; el cambio de una pantalla a otra se hace con enlaces o redirección
+  HTTP puro.
+- **Resultados distintos según modo.** En modo simulación el premio se entrega
+  al momento; en modo real la adjudicación sigue el mismo bloqueo de promoción
+  y cola de correos que el motor ya tiene.
+
+**Fallos que daremos por resueltos.**
+
+- El aviso de “participación rechazada” ya no es silencioso: el servidor devuelve
+  un mensaje legible explicando por qué (horario, regla incumplida, etc.).
+- La participación quedada sin unidad (por ejemplo, después de deshacer una
+  adjudicación) se muestra como “sin premio” y no como error.
+
+**Cómo se comprobará.** Los casos 8–10 de la suite oficial ya cubren el panel;
+se añadirán tres casos nuevos (participación única, doble envío idempotente,
+rechazo con mensaje) y el humo de las pantallas ampliado a participar y
+resultado. La suite oficial pasará de 202 a unas 260 comprobaciones aproximadamente.

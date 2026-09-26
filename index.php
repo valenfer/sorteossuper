@@ -268,6 +268,10 @@ $router->post('admin/promociones/{id}/premios/{premio}/alternar', 'ControladorFo
 $router->get('admin/promociones/{id}/formulario', 'ControladorFormulario', 'formulario', $admin);
 $router->post('admin/promociones/{id}/formulario', 'ControladorFormulario', 'guardarFormulario', $admin);
 
+// Participacion en la campana.
+$router->get('admin/promociones/{id}/participar', 'ControladorParticipacion', 'formulario', $admin);
+$router->post('admin/promociones/{id}/participar', 'ControladorParticipacion', 'registrar', $admin);
+
 // Reglas, ajustes y apariencia.
 $router->get('admin/promociones/{id}/reglas', 'ControladorCampana', 'reglas', $admin);
 $router->post('admin/promociones/{id}/reglas', 'ControladorCampana', 'guardarReglas', $admin);

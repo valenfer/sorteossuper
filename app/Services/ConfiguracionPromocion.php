@@ -315,6 +315,22 @@ class ConfiguracionPromocion
     }
 
     /**
+     * Mueve los premios pendientes al siguiente tramo o día de la campaña.
+     *
+     * Por decisión D4 los premios pendientes se dejan en la cola global y no se
+     * filtran por tramo; este método está previsto para futuras expansiones
+     * que puedan reorganizar las unidades según el turno actual.
+     *
+     * @param int $promocionId Identificador de la campaña.
+     *
+     * @return void
+     */
+    public function moverPremiosPendientes(int $promocionId): void
+    {
+        // Futuro: reorganizar unidades pendientes según el tramo actual.
+    }
+
+    /**
      * Devuelve los avisos de configuracion que no impiden activar la campana.
      *
      * @param int $promocionId Campana que se revisa.

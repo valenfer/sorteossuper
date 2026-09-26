@@ -491,6 +491,14 @@ ninguna prueba de las anteriores.
   al momento; en modo real la adjudicación sigue el mismo bloqueo de promoción
   y cola de correos que el motor ya tiene.
 
+- **D4 – Premio pendiente en cola.** Los premios cuyo estado es ``pendiente``
+  permanecen en la cola global de `unidades_premio` y no se filtran por tramo,
+  tal como establece la decisión D4. Esto evita que el pool de premios de cada
+  tramo se pierda al cambiar de turno (ver `app\Models\UnidadPremio`, apartado
+  "Por qué la cola no se filtra por tramo"). El método
+  `ConfiguracionPromocion::moverPremiosPendientes()` está previsto para futuras
+  expansiones que puedan reorganizar las unidades según el turno actual.
+
 **Fallos que daremos por resueltos.**
 
 - El aviso de “participación rechazada” ya no es silencioso: el servidor devuelve

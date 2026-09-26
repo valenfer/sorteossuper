@@ -8,15 +8,21 @@
  * ============================================================================
  *
  * Cuando alguien entra, el sistema tiene que llevarlo a alguna parte segun su
- * rol: el administrador al panel, la azafata al mostrador. Hasta que existan las
- * pantallas de verdad de los hitos 2 a 5, este controlador muestra una pagina
- * minima que cumple tres funciones:
+ * rol: la azafata al mostrador, y el administrador al panel de campanas.
+ *
+ * El panel del administrador ya no sale de aqui. Lo lleva
+ * \App\Controllers\ControladorCampanas, desde el hito 3, porque en cuanto la
+ * campana tiene tramos, premios y calendario, la pantalla de destino del
+ * administrador y el listado de campanas son la misma cosa. Este controlador se
+ * queda con la pantalla del mostrador, que sigue siendo provisional.
+ *
+ * Lo que hace la pantalla provisional del mostrador es cumplir tres funciones:
  *
  *   1. Que el redireccionado tras entrar funcione y se pueda probar.
  *   2. Que se vea quien esta dentro y con que rol, que es la comprobacion mas
  *      basica de que la sesion y el control de acceso hacen su trabajo.
  *   3. Que quede escrito, a la vista, que la pantalla no esta terminada, para
- *      que nadie la tome por una pantalla enproduction.
+ *      que nadie la tome por una pantalla en produccion.
  *
  * El enrutador ya exige el rol antes de llegar aqui, asi que en estas pantallas
  * no hay que comprobar nada. Aun asi, el rol se vuelve a mirar para mostrar el
@@ -25,6 +31,7 @@
  *
  * @see \App\Core\Router
  * @see \App\Core\Autorizacion
+ * @see \App\Controllers\ControladorCampanas
  */
 
 declare(strict_types=1);
@@ -40,19 +47,6 @@ use App\Core\Vista;
  */
 class ControladorInicio extends Controlador
 {
-    /**
-     * Pantalla del administrador.
-     *
-     * @return void
-     */
-    public function panel(): void
-    {
-        $this->comun([
-            'titulo' => 'Panel',
-            'rol'    => Autorizacion::ROL_ADMINISTRADOR,
-        ]);
-    }
-
     /**
      * Pantalla de la azafata.
      *

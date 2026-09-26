@@ -270,6 +270,265 @@ function mensajesEnCola(int $promocionId): int
 }
 
 /**
+ * Crea una campana con su tramo, su premio, sus campos y sus cantidades.
+ *
+ * Los casos 8, 9 y 10 del panel necesitan una campana que este «montada pero
+ * todavia sin activar», que es el estado en el que se escribe todo el hito 3. Se
+ * monta aqui con la misma forma que usaria el panel -servicios, no INSERT a
+ * mano- porque una prueba que se monta con SQL distinto del que usa el codigo
+ * comprobaria el SQL, no el codigo.
+ *
+ * @param array<string, mixed> $opciones Lo que se pueda cambiar del escenario:
+ *                                      «premios» (numero de premios),
+ *                                      «tramos» (numero de tramos),
+ *                                      «campos» (si se crean los campos
+ *                                      obligatorios del formulario),
+ *                                      «reglas» (si se crean las reglas).
+ *
+ * @return array<string, mixed> Identificadores de lo creado: «promocion»,
+ *                              «tramos», «tipos» y «campos».
+ */
+function crearEscenarioDePanel(array $opciones = []): array
+{
+    $db = Aplicacion::db();
+    $ahora = Aplicacion::ahora();
+    $config = new \App\Services\ConfiguracionPromocion();
+
+    $numeroPremios = (int) ($opciones['premios'] ?? 1);
+    $numeroTramos = (int) ($opciones['tramos'] ?? 1);
+    $sufijo = (string) ($opciones['sufijo'] ?? 'panel');
+
+    $promocionId = $db->insertar(
+        'INSERT INTO promociones (
+             nombre, zona_horaria, estado, fecha_inicio, creado_en, actualizada_en
+         ) VALUES (?, ?, ?, CURDATE(), ?, ?)',
+        [
+            nombreCampanaDePrueba() . ' ' . $sufijo,
+            'Europe/Madrid',
+            \App\Models\Promocion::ESTADO_BORRADOR,
+            $ahora,
+            $ahora,
+        ]
+    );
+
+    $tipos = [];
+    $tramos = [];
+    $campos = [];
+
+    for ($n = 1; $n <= $numeroPremios; $n++) {
+        $tipos[] = $db->insertar(
+            'INSERT INTO tipos_premio (promocion_id, nombre, activo, creado_en, actualizado_en)
+             VALUES (?, ?, 1, ?, ?)',
+            [$promocionId, 'Premio de pruebas ' . $sufijo . ' ' . $n, $ahora, $ahora]
+        );
+    }
+
+    for ($n = 1; $n <= $numeroTramos; $n++) {
+        $tramoId = $db->insertar(
+            'INSERT INTO tramos (promocion_id, fecha, hora_inicio, hora_fin, creado_en)
+             VALUES (?, CURDATE(), ?, ?, ?)',
+            [$promocionId, '1' . $n . ':00:00', '23:00:00', $ahora]
+        );
+
+        $tramos[] = $tramoId;
+
+        // Dos unidades de cada premio en cada tramo: el generador tiene margen
+        // de sobra, asi que estos casos prueban el camino feliz y no el limite.
+        // Una sola fila por par, porque la tabla tiene clave unica sobre
+        // (tramo_id, tipo_premio_id): la cantidad va en la fila, no en varias.
+        foreach ($tipos as $tipoId) {
+            $db->insertar(
+                'INSERT INTO asignaciones_tramo (tramo_id, tipo_premio_id, cantidad)
+                 VALUES (?, ?, ?)',
+                [$tramoId, $tipoId, 2]
+            );
+        }
+    }
+
+    if (($opciones['campos'] ?? true) === true) {
+        // Los ocho campos que el apartado 4.2 da por obligatorios en toda
+        // campana. Se crean con la misma constante que usa el servicio para
+        // revisar la activacion, para que un campo nuevo que se anada al
+        // apartado 4.2 no haga que estas pruebas se queden verdes por un motivo
+        // equivocado.
+        $etiquetas = [
+            'nombre'              => 'Nombre y apellidos',
+            'dni'                 => 'DNI',
+            'telefono'            => 'Telefono',
+            'direccion'           => 'Direccion',
+            'codigo_postal'       => 'Codigo postal',
+            'num_ticket'          => 'Numero de ticket',
+            'codigo_participacion' => 'Codigo de participacion',
+            'email'               => 'Correo electronico',
+        ];
+
+        $campos = [];
+
+        foreach (\App\Services\ConfiguracionPromocion::CAMPOS_OBLIGATORIOS as $clave) {
+            $campos[] = [
+                'clave'             => $clave,
+                'etiqueta'          => $etiquetas[$clave] ?? $clave,
+                'tipo'              => $clave === 'email' ? 'email' : 'texto',
+                'obligatorio'       => true,
+                'visible'           => true,
+                'valor_por_defecto' => '',
+                'min_largo'         => '0',
+                'max_largo'         => '255',
+            ];
+        }
+
+        $config->guardarCampos($campos, $promocionId);
+        $campos = (new \App\Models\CampoFormulario())->claves($promocionId);
+    }
+
+    if (($opciones['reglas'] ?? true) === true) {
+        $config->guardarReglas(['una_por_persona' => true], $promocionId);
+    }
+
+    return [
+        'promocion' => $promocionId,
+        'tramos'    => $tramos,
+        'tipos'     => $tipos,
+        'campos'    => $campos,
+    ];
+}
+
+/**
+ * Borra una campana de prueba y todo lo que cuelga de ella.
+ *
+ * Las pruebas del panel crean campanas, y sin esto la base de pruebas se
+ * llenaria de campanas que no sirven para nada. Se borra en el orden inverso al
+ * de las claves foraneas, y se empieza por las filas que tienen dependencias
+ * para que ninguna fila deje referencing a algo que ya no esta.
+ *
+ * @param int $promocionId Campana que se quiere borrar.
+ *
+ * @return void
+ */
+function borrarEscenarioDePanel(int $promocionId): void
+{
+    $db = Aplicacion::db();
+
+    // asignaciones_tramo cuelga del tramo y no de la campana, asi que se borra
+    // con un JOIN en vez de con una columna propia. Se empieza por las filas
+    // mas dependientes para que ninguna se quede apuntando a algo que ya no esta.
+    $db->ejecutar(
+        'DELETE a FROM asignaciones_tramo a
+           INNER JOIN tramos t ON t.id = a.tramo_id
+          WHERE t.promocion_id = ?',
+        [$promocionId]
+    );
+
+    $tablas = [
+        'unidades_premio'      => 'promocion_id',
+        'tramos'              => 'promocion_id',
+        'campos_formulario'   => 'promocion_id',
+        'reglas_participacion' => 'promocion_id',
+        'configuracion_visual' => 'promocion_id',
+        'correos'             => 'promocion_id',
+        'participaciones'     => 'promocion_id',
+        'intentos_rechazados' => 'promocion_id',
+        'tipos_premio'        => 'promocion_id',
+        // La campana se borra por su propia clave, que no se llama igual que la
+        // de las demas. Por eso la columna va escrita al lado en vez de deducirse.
+        'promociones'         => 'id',
+    ];
+
+    foreach ($tablas as $tabla => $columna) {
+        $db->ejecutar("DELETE FROM {$tabla} WHERE {$columna} = ?", [$promocionId]);
+    }
+}
+
+/**
+ * Rellena $_POST y $_SERVER como si el navegador acabara de enviar el formulario.
+ *
+ * Las pantallas se prueban a traves de los controladores, que es donde estan
+ * las comprobaciones que importan: que no falte el token, que el rol sea el
+ * bueno y que los datos se lean del POST. Preparar el superglobal aqui, en vez
+ * de llamar al metodo del controlador con parametros, es lo que hace que la
+ * prueba falle si el metodo empieza a leer de $_POST algo que no esta.
+ *
+ * @param array<string, mixed> $post    Datos del formulario.
+ * @param string               $destino Ruta a la que se envian.
+ *
+ * @return void
+ */
+function enviarFormulario(array $post, string $destino): void
+{
+    // El token se planta en la sesion a proposito. Csrf::token() devuelve cadena
+    // vacia en consola porque no hay sesion que la guarde, pero
+    // Csrf::exigirValido() si lee $_SESSION, y eso se puede escribir desde aqui.
+    // Asi se prueban los POST de verdad, con la comprobacion del token de
+    // por medio, en vez de saltarsela y luego Publiques sin comprobar.
+    $_SESSION = $_SESSION ?? [];
+    $_SESSION[\App\Core\Csrf::CAMPO] = 'token-de-prueba';
+    $post[\App\Core\Csrf::CAMPO] = 'token-de-prueba';
+
+    $_POST = $post;
+    $_SERVER['REQUEST_METHOD'] = 'POST';
+    $_SERVER['REQUEST_URI'] = $destino;
+}
+
+/**
+ * Limpia el superglobal de la peticion entre una prueba y otra.
+ *
+ * @return void
+ */
+function limpiarPeticion(): void
+{
+    $_POST = [];
+    $_GET = [];
+    unset($_FILES);
+    $_SERVER['REQUEST_METHOD'] = 'GET';
+
+    // isset y no un unset a secas: en consola puede que no exista $_SESSION, y
+    // unset sobre un superglobal que no esta simplemente no hace nada, pero
+    // leerlo antes si avisa.
+    if (isset($_SESSION[\App\Core\Csrf::CAMPO])) {
+        unset($_SESSION[\App\Core\Csrf::CAMPO]);
+    }
+}
+
+/**
+ * Llama a una accion de un controlador y devuelve el HTML que pinta.
+ *
+ * Las pantallas se prueban asi y no renderizando la plantilla a mano, porque lo
+ * que hay que comprobar es que el controlador y la vista encajan: que la vista
+ * recibe las claves que el controlador pasa, y que la pantalla enseña lo que
+ * tiene que enseñar. Si se renderizara la plantilla suelta, una vista que
+ * espera una clave que el controlador no manda pasaria la prueba y reventaria
+ * en el navegador.
+ *
+ * No se puede probar por HTTP desde la consola porque \App\Core\Csrf solo
+ * genera token en una peticion web, y sin sesion no hay token que comprobar.
+ * Lo que si se prueba por HTTP, en el caso 4, es que el rol y el token se
+ * exigen: una vez comprobado eso, pintar la pantalla no lo cambia.
+ *
+ * @param string                $controlador Clase del controlador.
+ * @param string                $metodo      Accion a llamar.
+ * @param array<string, mixed>  $parametros  Parametros de la ruta.
+ *
+ * @return string HTML que la accion ha impreso.
+ */
+function htmlDeAccion(string $controlador, string $metodo, array $parametros = []): string
+{
+    $clase = 'App\\Controllers\\' . $controlador;
+    $instancia = new $clase();
+    $instancia->asignarParametros($parametros);
+
+    ob_start();
+
+    try {
+        $instancia->$metodo();
+    } catch (Throwable $e) {
+        ob_end_clean();
+        throw $e;
+    }
+
+    return (string) ob_get_clean();
+}
+
+/**
  * Un validador que acepta siempre.
  *
  * Es el caso normal de una campana sin reglas especiales, y tambien lo que
@@ -277,8 +536,7 @@ function mensajesEnCola(int $promocionId): int
  * desvie.
  */
 class ValidadorQueAcepta implements ValidadorReglas
-{
-    /**
+{    /**
      * Devuelve siempre null, es decir, el intento es valido.
      *
      * @param array<string, mixed> $intento Datos del intento.

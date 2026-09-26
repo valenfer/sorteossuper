@@ -303,6 +303,32 @@ const CASOS = [
             'Hay exactamente una unidad entregada de las que habia.',
         ],
     ],
+    8 => [
+        'titulo' => 'El panel se monta y el reparto sale del plan',
+        'pasos'  => [
+            'Una campana en borrador con tramo, premio, cantidades y los ocho campos obligatorios.',
+            'Sin generar el reparto, la activacion avisa de que falta el calendario y se niega.',
+            'Generado el reparto, la campana se activa y la ficha deja de ofrecer volver a activarla.',
+        ],
+    ],
+    9 => [
+        'titulo' => 'Las once pantallas del panel pintan lo que deben',
+        'pasos'  => [
+            'Listado, ficha, datos, premios, formulario, reglas, ajustes, apariencia, tramos y calendario.',
+            'Cada pantalla se pinta con los datos de su campana y enseña su contenido.',
+            'La ficha de una campana no enseña los datos de otra.',
+        ],
+    ],
+    10 => [
+        'titulo' => 'Lo que el panel no deja hacer',
+        'pasos'  => [
+            'Los datos generales rechazan un estado mandado a mano, sin cambiar el de la campana.',
+            'Un tramo que se solapa con otro se marca, y tocar un extremo si vale.',
+            'Un tramo con mas premios que minutos se diagnostica antes de generar, y generar sin marcar la casilla se niega.',
+            'Un tramo con unidades ya generadas no se borra.',
+            'La fila en blanco del formulario no se guarda, y una fila a medias se explica sin guardarse.',
+        ],
+    ],
 ];
 
 /**
@@ -353,6 +379,11 @@ function ficherosPhp(string $raiz): array
         '/app',
         '/bin',
         '/tests',
+        // Las vistas tambien. Son PHP, llevan sus bloques @var al principio y su
+        // prosa en castellano, y son la mitad de lo que se ha escrito en el
+        // hito 3. Dejarlas fuera haria que el verificador pasara por encima de
+        // codigo recien escrito sin mirarlo, que es justo cuando mas falta hace.
+        '/views',
     ];
 
     $ficheros = [];

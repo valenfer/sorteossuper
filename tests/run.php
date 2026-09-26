@@ -162,6 +162,51 @@ function comprobarFalla(string $clase, callable $operacion, string $descripcion)
     comprobar(false, $descripcion, 'no se produjo ninguna excepcion');
 }
 
+/**
+ * Comprueba que un texto contiene un fragmento.
+ *
+ * Se usa con el HTML de las pantallas. Se busca el fragmento tal cual, sin
+ * recortar espacios ni normalizar nada, porque el HTML que sale de la vista es
+ * exactamente el que se envia al navegador: si un cierre de etiqueta se pierde o
+ * sobra por un espacio de mas, el navegador lo va a notar igual que la prueba.
+ *
+ * @param string $texto       Texto en el que se busca.
+ * @param string $fragmento   Lo que tiene que estar dentro.
+ * @param string $descripcion Que se esta comprobando.
+ *
+ * @return void
+ */
+function comprobarContiene(string $texto, string $fragmento, string $descripcion): void
+{
+    comprobar(
+        strpos($texto, $fragmento) !== false,
+        $descripcion,
+        'no aparece «' . $fragmento . '». Se han impreso ' . strlen($texto) . ' bytes'
+    );
+}
+
+/**
+ * Comprueba que un texto NO contiene un fragmento.
+ *
+ * El caso de uso es el inverso del de comprobarContiene(): hay cosas que no
+ * deben aparecer nunca en una pantalla, y que se comprueban mejor buscando que
+ * no estan que leyendo la pagina entera.
+ *
+ * @param string $texto       Texto en el que se busca.
+ * @param string $fragmento   Lo que no tiene que estar dentro.
+ * @param string $descripcion Que se esta comprobando.
+ *
+ * @return void
+ */
+function comprobarNoContiene(string $texto, string $fragmento, string $descripcion): void
+{
+    comprobar(
+        strpos($texto, $fragmento) === false,
+        $descripcion,
+        'aparece «' . $fragmento . '» y no deberia'
+    );
+}
+
 // -----------------------------------------------------------------------------
 // Casos de pruebas
 // -----------------------------------------------------------------------------
@@ -1113,6 +1158,9 @@ function caso7(): void
             claveDePrueba('caso7-persona-' . $indice),
             instanteDeHoy('11:00:00'),
             (string) $escenario['tramo'],
+            // El identificador de la campana va explicito, no se busca por
+            // nombre dentro del proceso hijo. Ver la nota de _proceso.php.
+            (string) $escenario['promocion'],
         ];
 
         $mandos = proc_open(
@@ -1216,6 +1264,432 @@ function caso7(): void
 }
 
 /**
+ * Caso 8: el panel se monta y el reparto sale del plan.
+ *
+ * ============================================================================
+ * QUE COMPRUEBA Y POR QUE POR ESTE ORDEN
+ * ============================================================================
+ *
+ * Monta una campana con la configuracion que exige el apartado 4.2 -premios,
+ * tramos, cantidades, formulario y reglas- y luego hace lo que hace el
+ * administrador: generar el calendario.
+ *
+ * El orden importa. Se comprueba primero que la campana esta incompleta y que la
+ * activacion se niega, porque esa negativa es la que protege lo demas: si se
+ * pudiera activar con el calendario vacio, todo lo que viene despues daria igual
+ * de falso. Luego se genera, y solo entonces se comprueba que la campana queda
+ * activable.
+ *
+ * La activacion se prueba por el servicio y no por el boton de la ficha, porque
+ * la pulsacion exige un token de sesion que en consola no existe. Lo que se
+ * comprueba con la pantalla es que el boton aparece o no segun la misma lista de
+ * pendientes, que es lo que impide saltarsela.
+ *
+ * @return void
+ */
+function caso8(): void
+{
+    echo 'Caso 8: el panel se monta y el reparto sale del plan', PHP_EOL;
+
+    $escenario = crearEscenarioDePanel(['premios' => 2, 'tramos' => 2]);
+    $id = (int) $escenario['promocion'];
+    $config = new \App\Services\ConfiguracionPromocion();
+
+    // ---- Antes de generar, la campana no se puede activar ------------------
+    $pendientes = $config->pendientesDeActivar($id);
+    $sinCalendario = array_values(array_filter(
+        $pendientes,
+        static fn (string $p): bool => str_contains($p, 'calendario no esta generado')
+    ));
+
+    comprobar(
+        count($sinCalendario) === 1,
+        'Sin generar el reparto, la activacion avisa de que falta el calendario',
+        'pendientes: ' . implode(' | ', $pendientes)
+    );
+
+    comprobarFalla(
+        \App\Core\ErrorValidacion::class,
+        static fn () => $config->activar($id),
+        'Una campana sin calendario NO se puede activar'
+    );
+
+    comprobar(
+        (new \App\Models\Promocion())->exigirPorId($id, 'x')['estado'] === \App\Models\Promocion::ESTADO_BORRADOR,
+        'El intento fallido de activar ha dejado la campana en borrador'
+    );
+
+    // ---- Generar el reparto ------------------------------------------------
+    $informe = (new \App\Services\Calendario())->generar($id);
+
+    comprobar(
+        (int) ($informe['generado'] ?? 0) > 0,
+        'El generador ha repartido unidades a partir del plan',
+        'informe: ' . json_encode($informe, JSON_UNESCAPED_UNICODE)
+    );
+
+    comprobar(
+        empty($informe['problemas']),
+        'El generador no ha encontrado problemas en el plan que se ha escrito',
+        'problemas: ' . json_encode($informe['problemas'] ?? [], JSON_UNESCAPED_UNICODE)
+    );
+
+    // La comparacion tiene que dar el mismo numero que el plan: es la forma de
+    // comprobar que el reparto ha salido entero, y no solo que el generator ha
+    // dicho que si.
+    $comparacion = $config->compararPlanYCalendario($id);
+    $desajustes = array_values(array_filter($comparacion, static fn (array $f): bool => (bool) $f['cambia']));
+
+    comprobarIgual(0, count($desajustes), 'El calendario coincide con el plan, fila a fila');
+
+    // ---- Y ahora si se puede activar ---------------------------------------
+    $pendientes = $config->pendientesDeActivar($id);
+    comprobarIgual([], $pendientes, 'Con el calendario hecho, no falta nada para activar');
+
+    $htmlFicha = htmlDeAccion('ControladorCampanas', 'ficha', ['id' => $id]);
+    comprobarContiene($htmlFicha, 'Activar la campana', 'La ficha ofrece el boton de activar cuando ya no falta nada');
+
+    $antesDeActivar = $config->avisosDeConfiguracion($id);
+    $config->activar($id);
+    limpiarPeticion();
+
+    $campana = (new \App\Models\Promocion())->exigirPorId($id, 'x');
+    comprobarIgual(\App\Models\Promocion::ESTADO_ACTIVA, $campana['estado'], 'La campana se ha activado de verdad');
+
+    $despuesDeActivar = $config->avisosDeConfiguracion($id);
+    comprobar(
+        count($despuesDeActivar) === count($antesDeActivar),
+        'Activar no ha inventado ni quitado avisos',
+        'antes: ' . count($antesDeActivar) . ', despues: ' . count($despuesDeActivar)
+    );
+
+    // ---- Y una vez activa, la ficha ya no ofrece volver a activarla -------
+    $htmlFicha = htmlDeAccion('ControladorCampanas', 'ficha', ['id' => $id]);
+    comprobarContiene($htmlFicha, 'La campana esta activa', 'La ficha dice que la campana ya esta activa');
+    comprobarNoContiene($htmlFicha, '>Activar la campana<', 'La ficha ya no ofrece activar una campana que lo esta');
+
+    borrarEscenarioDePanel($id);
+}
+
+/**
+ * Caso 9: cada pantalla del panel pinta y encaja con su controlador.
+ *
+ * ============================================================================
+ * QUE COMPRUEBA Y POR QUE
+ * ============================================================================
+ *
+ * Abre las once pantallas del panel y comprueba que cada una se pinta y que
+ * enseña lo suyo. El fallo que se busca aqui no es un error de PHP, sino el mas
+ * dificil de ver: una vista que espera una clave que el controlador no le pasa,
+ * o que pinta un dato de otra campana.
+ *
+ * Se comprueba tambien que la ficha no enseña datos de otra campana. Es el fallo
+ * de seguridad mas probable de un panel con ocho pantallas, y el que menos se
+ * nota a ojo, porque la pantalla se ve bien: solo que enseña el numero de otra.
+ *
+ * @return void
+ */
+function caso9(): void
+{
+    echo 'Caso 9: las once pantallas del panel pintan lo que deben', PHP_EOL;
+
+    $primera = crearEscenarioDePanel(['premios' => 1, 'tramos' => 1, 'sufijo' => 'una']);
+    $segunda = crearEscenarioDePanel(['premios' => 1, 'tramos' => 1, 'sufijo' => 'dos']);
+
+    $una = (int) $primera['promocion'];
+    $otra = (int) $segunda['promocion'];
+
+    $nombreDeLaPrimera = (string) (new \App\Models\Promocion())->exigirPorId($una, 'x')['nombre'];
+    $nombreDeLaOtra = (string) (new \App\Models\Promocion())->exigirPorId($otra, 'x')['nombre'];
+
+    // ---- Las once pantallas se pintan sin romperse -------------------------
+    $pantallas = [
+        ['ControladorCampanas', 'listar', [], 'Campanas'],
+        ['ControladorCampanas', 'ficha', ['id' => $una], 'Resumen'],
+        ['ControladorCampanas', 'nueva', [], 'Nueva'],
+        ['ControladorCampanas', 'editar', ['id' => $una], 'Comercio'],
+        ['ControladorFormulario', 'premios', ['id' => $una], 'Anadir premio'],
+        ['ControladorFormulario', 'formulario', ['id' => $una], 'el orden en el que'],
+        ['ControladorCampana', 'reglas', ['id' => $una], 'Una participacion por persona'],
+        ['ControladorCampana', 'ajustes', ['id' => $una], 'Modo simulacion'],
+        ['ControladorCampana', 'apariencia', ['id' => $una], 'Textos de resultado'],
+        ['ControladorCampana', 'tramos', ['id' => $una], 'Anadir tramo'],
+        ['ControladorCampana', 'calendario', ['id' => $una], 'Generar el reparto'],
+    ];
+
+    foreach ($pantallas as [$controlador, $metodo, $parametros, $esperado]) {
+        try {
+            $html = htmlDeAccion($controlador, $metodo, $parametros);
+            comprobar(
+                strlen($html) > 500,
+                'La pantalla ' . $controlador . '::' . $metodo . ' se ha pintado entera',
+                'solo han salido ' . strlen($html) . ' bytes'
+            );
+            comprobarContiene($html, $esperado, 'La pantalla ' . $metodo . ' enseña su contenido');
+        } catch (Throwable $e) {
+            comprobar(false, 'La pantalla ' . $controlador . '::' . $metodo . ' se puede pintar', get_class($e) . ': ' . $e->getMessage());
+        }
+    }
+
+    // ---- El listado ve las dos campanas, y la ficha solo la suya ----------
+    $listado = htmlDeAccion('ControladorCampanas', 'listar', []);
+    comprobarContiene($listado, htmlspecialchars($nombreDeLaPrimera, ENT_QUOTES, 'UTF-8'), 'El listado enseña la primera campana');
+    comprobarContiene($listado, htmlspecialchars($nombreDeLaOtra, ENT_QUOTES, 'UTF-8'), 'El listado enseña la segunda campana');
+
+    $ficha = htmlDeAccion('ControladorCampanas', 'ficha', ['id' => $una]);
+    comprobarContiene($ficha, htmlspecialchars($nombreDeLaPrimera, ENT_QUOTES, 'UTF-8'), 'La ficha enseña el nombre de su campana');
+    comprobarNoContiene($ficha, htmlspecialchars($nombreDeLaOtra, ENT_QUOTES, 'UTF-8'), 'La ficha NO enseña el nombre de otra campana');
+
+    // El identificador de la otra campana tampoco puede aparecer. Se cuenta el
+    // de la propia: si se pide la ficha con el identificador de la otra, no puede
+    // enseñarla.
+    $fichaDeLaOtra = htmlDeAccion('ControladorCampanas', 'ficha', ['id' => $otra]);
+    comprobarContiene($fichaDeLaOtra, htmlspecialchars($nombreDeLaOtra, ENT_QUOTES, 'UTF-8'), 'La ficha de la segunda enseña su propio nombre');
+    comprobarNoContiene($fichaDeLaOtra, htmlspecialchars($nombreDeLaPrimera, ENT_QUOTES, 'UTF-8'), 'La ficha de la segunda NO enseña la primera');
+
+    // ---- Un tramo de otra campana no se puede tocar desde esta -------------
+    $tramoAjeno = (int) $primera['tramos'][0];
+    comprobarFalla(
+        \App\Core\NoEncontrado::class,
+        static fn () => (new \App\Models\Tramo())->exigirPorId($tramoAjeno, 'x', $otra),
+        'Un tramo de la primera campana NO se puede editar desde la pantalla de la segunda'
+    );
+
+    // ---- Y un identificador que no es un numero da 404 antes de la consulta -
+    comprobarFalla(
+        \App\Core\NoEncontrado::class,
+        static function () use ($otra): void {
+            htmlDeAccion('ControladorCampanas', 'ficha', ['id' => '1;DROP TABLE promociones']);
+        },
+        'Un identificador con texto malicioso da 404 sin llegar a la base de datos'
+    );
+
+    borrarEscenarioDePanel($una);
+    borrarEscenarioDePanel($otra);
+}
+
+/**
+ * Caso 10: lo que el panel no deja hacer.
+ *
+ * ============================================================================
+ * QUE COMPRUEBA Y POR QUE
+ * ============================================================================
+ *
+ * Un panel se juzga tambien por lo que se niega a hacer. Aqui se comprueban las
+ * cuatro negaciones que protegen la campana: no se escribe el estado desde el
+ * formulario de datos, no se solapan los tramos, no se accepta un tramo que no
+ * cabe en sus minutos sin decirlo, y no se puede tocar un tramo de otra
+ * campana.
+ *
+ * Se comprueban por el servicio y no por la pantalla porque son reglas de
+ * negocio, y porque asi se pueden probar las cuatro sin montar un formulario con
+ * token de sesion.
+ *
+ * @return void
+ */
+function caso10(): void
+{
+    echo 'Caso 10: lo que el panel no deja hacer', PHP_EOL;
+
+    $escenario = crearEscenarioDePanel(['premios' => 1, 'tramos' => 1]);
+    $id = (int) $escenario['promocion'];
+    $config = new \App\Services\ConfiguracionPromocion();
+    $tramos = new \App\Services\Tramos();
+    $validador = new \App\Core\Validador();
+
+    // ---- El estado no se puede cambiar desde los datos generales ----------
+    comprobarFalla(
+        \App\Core\ErrorValidacion::class,
+        static function () use ($config, $id): void {
+            $config->guardar([
+                'nombre'             => 'Campana manipulada',
+                'descripcion'        => '',
+                'comercio_nombre'    => '',
+                'comercio_cif'       => '',
+                'comercio_domicilio' => '',
+                'comercio_telefono'  => '',
+                'fecha_inicio'       => date('Y-m-d'),
+                'fecha_fin'          => '',
+                'zona_horaria'       => 'Europe/Madrid',
+                'estado'             => 'activa',
+            ], $id);
+        },
+        'Los datos generales NO aceptan un estado activo'
+    );
+
+    $campana = (new \App\Models\Promocion())->exigirPorId($id, 'x');
+    comprobarIgual(\App\Models\Promocion::ESTADO_BORRADOR, $campana['estado'], 'La campana sigue en borrador');
+
+    // ---- Dos tramos que se solapan no se guardan --------------------------
+    // El escenario deja un tramo de 11:00 a 23:00, que es el punto de partida de
+    // estas dos comprobaciones. Un tramo de 10:00 a 12:00 se monta dentro de el
+    // y uno de 09:00 a 11:00 lo toca justo por su primer extremo.
+    $hoy = date('Y-m-d');
+    $validador = new \App\Core\Validador();
+    $datos = $tramos->validarCampos($validador, 'tramo', $hoy, '10:00', '12:00');
+    comprobar($datos !== null, 'El tramo de las 10 a las 12 es valido en si mismo');
+
+    $validador = new \App\Core\Validador();
+    $datos = $tramos->validarCampos($validador, 'tramo', $hoy, '10:00', '12:00');
+    $tramos->comprobarSolapes($validador, $id, 'tramo', (string) $datos['fecha'], (string) $datos['hora_inicio'], (string) $datos['hora_fin'], null);
+
+    comprobar(
+        $validador->tieneErrores(),
+        'Un tramo que empieza dentro de otro se marca como solapado',
+        'errores: ' . json_encode($validador->errores(), JSON_UNESCAPED_UNICODE)
+    );
+
+    // ---- Tocar un extremo si vale -----------------------------------------
+    $validador = new \App\Core\Validador();
+    $datos = $tramos->validarCampos($validador, 'tramo', $hoy, '09:00', '11:00');
+    $tramos->comprobarSolapes($validador, $id, 'tramo', (string) $datos['fecha'], (string) $datos['hora_inicio'], (string) $datos['hora_fin'], null);
+    comprobar(
+        !$validador->tieneErrores(),
+        'Un tramo que acaba justo cuando empieza el otro NO es un solape',
+        'errores: ' . json_encode($validador->errores(), JSON_UNESCAPED_UNICODE)
+    );
+
+    // ---- Un tramo con horas invalidas no llega a la base de datos ---------
+    $validador = new \App\Core\Validador();
+    $datos = $tramos->validarCampos($validador, 'tramo', $hoy, '25:00', '26:00');
+    comprobar(
+        $datos === null,
+        'Un tramo con horas que no existen se rechaza antes de escribir'
+    );
+
+    $horasDelTramo = (int) \App\Core\Aplicacion::db()->valor(
+        'SELECT COUNT(*) FROM tramos WHERE promocion_id = ? AND hora_inicio = ?',
+        [$id, '25:00:00']
+    );
+    comprobarIgual(0, $horasDelTramo, 'No ha quedado ningun tramo con horas imposibles en la tabla');
+
+    // ---- Un tramo con demasiados premios se avisa antes de generar ---------
+    // El tramo del escenario va de 11:00 a 23:00, o sea 720 minutos. Se piden
+    // 800 premios: hay mas unidades que minutos y no cabe ni de lejos.
+    $db = \App\Core\Aplicacion::db();
+    $tramoId = (int) $escenario['tramos'][0];
+    $db->ejecutar(
+        'UPDATE asignaciones_tramo SET cantidad = ? WHERE tramo_id = ?',
+        [800, $tramoId]
+    );
+
+    $diagnostico = (new \App\Services\Calendario())->diagnosticar($id);
+    comprobar(
+        $diagnostico !== [],
+        'Un tramo con mas premios que minutos se diagnostica ANTES de generar',
+        'diagnostico: ' . json_encode($diagnostico, JSON_UNESCAPED_UNICODE)
+    );
+
+    $html = htmlDeAccion('ControladorCampana', 'calendario', ['id' => $id]);
+    comprobarContiene($html, 'no caben en su tiempo', 'La pantalla del calendario enseña el problema antes de generar');
+
+    // Generar sin marcar la casilla tiene que negarse, no repartir a cojas. No
+    // se lanza una excepcion: generar() devuelve el informe con generado=false y
+    // la lista de problemas, que es lo que la pantalla del calendario enseña.
+    $informe = (new \App\Services\Calendario())->generar($id);
+    comprobar(
+        ($informe['generado'] ?? true) === false && (int) ($informe['unidades'] ?? -1) === 0 && $informe['problemas'] !== [],
+        'Generar un tramo que no cabe, sin marcar la casilla, se niega',
+        'informe: ' . json_encode($informe, JSON_UNESCAPED_UNICODE)
+    );
+
+    comprobarIgual(
+        0,
+        (int) $db->valor('SELECT COUNT(*) FROM unidades_premio WHERE tramo_id = ?', [$tramoId]),
+        'Y el reparto que no cabia no ha escrito ninguna unidad'
+    );
+
+    // ---- Y un tramo con unidades ya generadas no se borra ----------------
+    $db->ejecutar('UPDATE asignaciones_tramo SET cantidad = ? WHERE tramo_id = ?', [2, $tramoId]);
+    (new \App\Services\Calendario())->generar($id);
+    comprobarIgual(
+        2,
+        (int) $db->valor('SELECT COUNT(*) FROM unidades_premio WHERE tramo_id = ?', [$tramoId]),
+        'El tramo que si cabia se ha repartido en dos unidades'
+    );
+
+    // borrarSiEstaLibre() no lanza: devuelve 0 y deja el tramo como estaba.
+    comprobarIgual(
+        0,
+        (new \App\Models\Tramo())->borrarSiEstaLibre($tramoId),
+        'Un tramo con unidades NO se puede borrar'
+    );
+
+    comprobarIgual(
+        1,
+        (int) $db->valor('SELECT COUNT(*) FROM tramos WHERE id = ?', [$tramoId]),
+        'Y el tramo con unidades sigue en la tabla'
+    );
+
+    // ---- La fila vacia del formulario se ignora, y no bloquea el guardado --
+    // Esto se probo de verdad, mandando el POST, porque el fallo era justo del
+    // navegador: la fila de abajo llevaba required en la etiqueta, asi que
+    // pulsar «Guardar» sin tocarla no dejaba enviar nada. Y una fila a medias
+    // se explica, pero no se guarda.
+    $enviar = static function (array $campos) use ($id): string {
+        enviarFormulario(['campo' => $campos], '/admin/campanas/' . $id . '/formulario');
+
+        return htmlDeAccion('ControladorFormulario', 'guardarFormulario', ['id' => $id]);
+    };
+
+    $filaVacia = [
+        'clave' => '', 'etiqueta' => '', 'tipo' => 'texto',
+        'min_largo' => '0', 'max_largo' => '255',
+    ];
+
+    $html = $enviar([
+        ['clave' => 'nombre', 'etiqueta' => 'Nombre y apellidos', 'tipo' => 'texto', 'obligatorio' => '1', 'visible' => '1', 'min_largo' => '0', 'max_largo' => '255'],
+        ['clave' => 'dni', 'etiqueta' => 'DNI', 'tipo' => 'texto', 'obligatorio' => '1', 'visible' => '1', 'min_largo' => '0', 'max_largo' => '255'],
+        $filaVacia,
+    ]);
+
+    limpiarPeticion();
+
+    // claves() viene ordenado por clave, que es lo que necesita quien solo
+    // quiere saber si existe una. El orden en el que se preguntan los campos
+    // es otra cosa, y va en listarPorPromocion(), que es lo que lee la pantalla.
+    $campos = new \App\Models\CampoFormulario();
+    comprobar(
+        $campos->claves($id) === ['dni', 'nombre'],
+        'La fila de abajo en blanco NO se guarda como un campo mas',
+        'guardados: ' . json_encode($campos->claves($id), JSON_UNESCAPED_UNICODE)
+    );
+
+    comprobar(
+        array_map(
+            static fn (array $c): string => (string) $c['clave'],
+            $campos->listarPorPromocion($id)
+        ) === ['nombre', 'dni'],
+        'Y los campos se guardan en el orden en que estaban en la pantalla'
+    );
+
+    comprobarContiene(
+        (string) htmlDeAccion('ControladorFormulario', 'formulario', ['id' => $id]),
+        'Nombre y apellidos',
+        'Y los campos escritos siguen en la pantalla'
+    );
+
+    // ---- Una fila a medias se explica, pero no se guarda ------------------
+    $html = $enviar([
+        ['clave' => 'nombre', 'etiqueta' => 'Nombre y apellidos', 'tipo' => 'texto', 'obligatorio' => '1', 'visible' => '1', 'min_largo' => '0', 'max_largo' => '255'],
+        ['clave' => 'dni', 'etiqueta' => 'DNI', 'tipo' => 'texto', 'obligatorio' => '1', 'visible' => '1', 'min_largo' => '0', 'max_largo' => '255'],
+        ['clave' => 'sin_etiqueta', 'etiqueta' => '', 'tipo' => 'texto', 'min_largo' => '0', 'max_largo' => '255'],
+    ]);
+
+    limpiarPeticion();
+
+    comprobarContiene($html, 'no tiene etiqueta', 'Una fila con clave pero sin etiqueta se explica en la pantalla');
+
+    comprobar(
+        $campos->claves($id) === ['dni', 'nombre'],
+        'Y esa fila a medias no llega a la base de datos',
+        'guardados: ' . json_encode($campos->claves($id), JSON_UNESCAPED_UNICODE)
+    );
+
+    borrarEscenarioDePanel($id);
+}
+
+/**
  * Lista de casos disponibles, indexada por numero.
  *
  * @var array<int, callable():void>
@@ -1229,6 +1703,9 @@ const PRUEBAS = [
     5 => 'caso5',
     6 => 'caso6',
     7 => 'caso7',
+    8 => 'caso8',
+    9 => 'caso9',
+    10 => 'caso10',
 ];
 
 // -----------------------------------------------------------------------------

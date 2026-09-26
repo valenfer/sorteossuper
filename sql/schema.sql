@@ -202,12 +202,12 @@ CREATE TABLE IF NOT EXISTS configuracion_visual (
     -- de forma que cambiar un color aqui cambia la interfaz entera sin tocar
     -- una sola linea de CSS. Es lo que permite cumplir el apartado 4.9 sin un
     -- framework, que impone su propia escala de colores.
-    color_fondo        VARCHAR(7) NOT NULL DEFAULT '#f5f5f5',
+    color_fondo        VARCHAR(7) NOT NULL DEFAULT '#f6f7f9',
     color_texto        VARCHAR(7) NOT NULL DEFAULT '#1a1a1a',
-    color_primario     VARCHAR(7) NOT NULL DEFAULT '#0a5ca8',
+    color_primario     VARCHAR(7) NOT NULL DEFAULT '#14509b',
     color_acento       VARCHAR(7) NOT NULL DEFAULT '#e8a33d',
     color_campos       VARCHAR(7) NOT NULL DEFAULT '#ffffff',
-    color_bordes       VARCHAR(7) NOT NULL DEFAULT '#cccccc',
+    color_bordes       VARCHAR(7) NOT NULL DEFAULT '#d3d7dd',
 
     actualizado_en     DATETIME NOT NULL,
 

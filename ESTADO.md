@@ -74,21 +74,25 @@ con las tres defensas contra la adjudicación doble, la idempotencia del intento
 el rechazo de intentos que incumplen una regla, y el encolado del correo. Ver la
 sección 5.
 
-**Las 15 tablas del esquema ya existen** (`sql/schema.sql`), incluida la de
-participaciones, la de cola de correos y la de auditoría. El modelo de datos
-está, y el motor que usa las cuatro tablas centrales también.
+**Hecho (hito 3).** El panel de promociones: las once pantallas de administración
+con sus rutas, el servicio `ConfiguracionPromocion` con las reglas de activación, y
+la generación del calendario desde el plan de tramos y cantidades. Ver la sección 5.
 
-**Las pantallas de destino son provisionales** y lo dicen en pantalla. No hay
-todavía ninguna pantalla de configuración, de participaciones ni de resultados:
-lo único que hay es la de acceso del hito 1.
+**Las 15 tablas del esquema ya existen** (`sql/schema.sql`), incluida la de
+participaciones, la de cola de correos y la de auditoría. El modelo de datos está,
+el motor que usa las cuatro tablas centrales, y el panel que las configura.
+
+**Lo que no hay todavía.** No hay pantalla de participaciones ni de resultados: la
+de acceso del hito 1 y el mostrador de la azafata son las únicas que ensayan el
+motor. Tampoco hay envío de correo de verdad (D1 encola, el hito 5 envía), ni
+reglas configuradas de verdad (el validador sigue siendo un doble, el hito 4 lo
+implementa), ni HTTP en la prueba de concurrencia, por lo que se dice en la
+sección 4.
 
 **En la raíz hay un `bbdd.png` con un diagrama de la base de datos hecho a
-mano.** Es una referencia personal y **no se versiona a propósito**, así que
-`git status` lo seguirá mostrando como `?? bbdd.png` mientras siga ahí. No
-borrarlo, moverlo ni modificarlo sin preguntar.
-
-**Las pantallas de destino son provisionales** y lo dicen en pantalla. No hay
-todavía ninguna pantalla de configuración, de participaciones ni de resultados.
+mano.** Se versiona desde el hito 3, con la autorización del promotor, porque es
+la referencia del esquema y sin ella hay que leer quince tablas para entender una
+consulta. No borrarlo ni moverlo sin preguntar.
 
 ## 4. Decisiones que condicionan el trabajo
 
@@ -182,6 +186,76 @@ comentario de `tests/_escenario.php` explica por qué. La segunda, que
 política de que los premios pendientes pasen al tramo y al día siguiente es un
 supuesto de la especificación, y el apartado 6 pide confirmarla antes de una
 campaña real. Ver la sección 6.
+
+## 5 bis. El hito 3: panel de promociones
+
+Once pantallas, todas detrás del rol de administrador, y un servicio que valida lo
+que llega de ellas.
+
+**Lo que hay construido.**
+
+| Fichero | Qué hace |
+| --- | --- |
+| `app\Services\ConfiguracionPromocion.php` | Todo lo que el panel guarda: datos generales, campos del formulario, reglas, ajustes, apariencia y la comparación plan/calendario. Concentrarlo aquí es lo que permite probarlo sin pasar por HTTP. |
+| `app\Services\Calendario.php` | El generador del reparto. Toma el plan de tramos y cantidades y reparte las unidades por los minutos que quedan, con el diagnóstico previo de D2. |
+| `app\Controllers\ControladorCampanas.php` | Listado, ficha y datos generales. |
+| `app\Controllers\ControladorFormulario.php` | Premios y campos del formulario. |
+| `app\Controllers\ControladorCampana.php` | Reglas, ajustes, apariencia, tramos y calendario. |
+| `views\admin\` | Las once vistas, sin JavaScript. |
+
+**Sin JavaScript, a propósito.** Todas las pantallas funcionan con el navegador
+tal como sale de la caja. La tabla de campos del formulario trae siempre una
+fila vacía al final, y se añade un campo escribiendo en ella y pulsando el mismo
+botón de guardar; quitarlos es dejar vacías su clave y su etiqueta. Un botón con
+JavaScript que quite filas sería más elegante y dejaría la pantalla inservible en
+la tablet del mostrador el día que el JavaScript no cargue.
+
+**Lo que se decidió aquí y conviene conocer.**
+
+- **Activar comprueba que hay calendario.** Un tramo con cantidades no es un
+  calendario: sin unidades programadas la campaña se abriría sin nada que
+  repartir. `UnidadPremio::contarEntregables()` cuenta solo las `programada`, que
+  son las que se pueden entregar.
+- **Un `estado` mandado a mano se rechaza, no se ignora.** `guardar()` no acepta
+  esa clave. Ignorarla sería más corto, pero dejaría un fallo invisible: quien
+  escribiera `estado=activa` creería que la campaña se ha activado y lo que
+  pasaría es que se guardaría sin decir nada, en borrador. Un error que no se ve
+  es peor que un error que se ve.
+- **La fila de campos del formulario no lleva `required`.** Con `required`, el
+  navegador no deja pulsar «Guardar» si la fila de abajo está en blanco, que es
+  justo lo que su propio texto de ayuda pide. La obligatoriedad la comprueba el
+  servidor, que además es el único que puede explicarse.
+- **Subir una imagen antes de guardar deja dos cosas que recoger**, y las dos se
+  recogen: si el guardado falla se borra la imagen recién subida, y si va bien se
+  borra la que ha quedado sustituida. Sin esto la carpeta de cada campaña se
+  llenaba de versiones viejas que nadie ve pero que ocupan disco.
+- **`redirigir()` no llama a `header()` en consola.** Con el mismo criterio que
+  ya usaba `Csrf::token()`: en consola no hay cabeceras que mandar y el aviso de
+  PHP no dice nada útil. Lo que se guarda es el aviso, que es lo que miran las
+  pruebas.
+
+**Fallos que aparecieron al escribir las pruebas y que no se habrían visto
+después.**
+
+- El proceso hijo de la prueba de concurrencia buscaba la campaña por nombre con
+  un `SELECT ... LIMIT 1` sin orden. Con dos campañas del mismo nombre —una
+  ejecución anterior que se quedó a medias— participaba en la que le tocaba y
+  fallaba con un error que no tenía nada que ver. Ahora el padre le pasa el
+  identificador, que no admite confusión.
+- `CampoFormulario::claves()` sale ordenado por clave, no por el orden en que se
+  preguntan. Las dos cosas son distintas y una prueba que las confunde pasa por
+  buena: el orden va en `listarPorPromocion()`.
+- La fila en blanco del formulario se descartaba en el servidor, pero el
+  `required` del navegador impedía siquiera llegar a mandarla. Los dos lados
+  tienen que estar de acuerdo, y ahora hay una prueba que manda el POST de
+  verdad.
+
+**Cómo se comprobó.** 202 comprobaciones en 11 casos. Los tres últimos son del
+panel: el 8 monta una campaña completa y la activa, el 9 pinta las once pantallas
+comprobando que cada una enseña lo suyo y que la ficha de una no enseña los
+datos de otra, y el 10 prueba lo que el panel no deja hacer. Además, un guion de
+humo pinta las once pantallas midiendo bytes, y `bin/verificar_docs.php` revisa
+también `views/`, que antes se saltaba.
 
 ## 6. Riesgos y limitaciones abiertas
 
@@ -356,3 +430,29 @@ el 7; y el caso 7 lanza dos procesos PHP independientes con conexiones propias
 sobre una sola unidad, y comprueba que uno gana, el otro no, y que en la tabla
 queda exactamente una unidad entregada. También se comprobó a mano que el proceso
 hijo **se niega a arrancar** si se le pasa el nombre de la base de la campaña.
+
+### Hito 3 — Panel de promociones
+
+Once pantallas de administración y el servicio que las valida. Todo el detalle
+está en la sección 5 bis; aquí solo lo que no está allí.
+
+**Decisiones tomadas aquí.**
+
+- **Sin JavaScript.** Ver la sección 5 bis. Es la decisión que más condiciona al
+  resto, porque se nota en cada vista.
+- **Activar exige calendario generado.** Un tramo con cantidades no es un
+  calendario.
+- **`bbdd.png` pasa a versionarse**, con autorización del promotor. `ESTADO.md`
+  decía lo contrario desde el hito 1, y ahora dice lo que se hizo.
+- **`bin/verificar_docs.php` ahora recorre `views/`.** Antes se saltaba la
+  mitad del código del hito. Al añadirlo aparecieron dos errores de verdad: cinco
+  caracteres cirílicos dentro de la palabra «generador» en un comentario de
+  `app/Models/TipoPremio.php`, y un `U+FFFD` en `tests/run.php`. Los dos
+  encontrados por la máquina, no por la lectura.
+
+**Cómo se comprobó.** 202 comprobaciones en 11 casos de la suite oficial, más
+siete guiones de prueba por servicio (imágenes, modelos, comparación, tramos,
+calendario, reparto y configuración). `bin/verificar_docs.php` sobre 58 ficheros
+sin un solo problema. Y un guion de humo que pinta las once pantallas midiendo
+los bytes que escribe, porque una vista que revienta en el navegador no la detecta
+ninguna prueba de las anteriores.

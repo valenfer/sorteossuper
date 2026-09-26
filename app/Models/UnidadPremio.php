@@ -82,6 +82,50 @@ class UnidadPremio extends Modelo
     public const ESTADO_ENTREGADA = 'entregada';
 
     /**
+     * Estado de una unidad retirada por el administrador antes de repartirse.
+     *
+     * Retirar no borra la fila: la deja en «anulada» con su motivo. El motivo es
+     * que el historial de una campana tiene que cuadrar, y si al retirar un premio
+     * desapareciera su fila, el total de premios de la campana dejaria de coincidir
+     * con la suma de los tramos sin que nadie pudiera explicar por que.
+     *
+     * @var string
+     */
+    public const ESTADO_ANULADA = 'anulada';
+
+    /**
+     * Estado de una unidad que llego a su hora y no pudo adjudicarse.
+     *
+     * No lo usa el generador de calendario, que solo crea unidades «programadas»,
+     * pero el panel lo muestra en el recuento para que se vea que un premio
+     * llego a su hora y se perdio, en vez de seguir esperando.
+     *
+     * @var string
+     */
+    public const ESTADO_NO_ENTREGADA = 'no_entregada';
+
+    /**
+     * Devuelve los cuatro estados posibles, con su texto para las personas.
+     *
+     * El estado es un ENUM de cuatro valores en el esquema, y el panel no puede
+     * inventar etiquetas: si el esquema anade un estado, este metodo tiene que
+     * contar con el, o el filtro del panel dejaria fuera unidades que si existen.
+     *
+     * @return array<string, string> Estados como claves y su etiqueta como
+     *                              valor, en el orden en que aparecen en el
+     *                              esquema.
+     */
+    public static function estados(): array
+    {
+        return [
+            self::ESTADO_PROGRAMADA   => 'Programada',
+            self::ESTADO_ENTREGADA    => 'Entregada',
+            self::ESTADO_ANULADA      => 'Anulada',
+            self::ESTADO_NO_ENTREGADA => 'No entregada',
+        ];
+    }
+
+    /**
      * Devuelve la primera unidad pendiente cuya hora ya ha llegado.
      *
      * La comparacion es «menor o igual que» y no «menor que», porque el apartado
@@ -211,6 +255,32 @@ class UnidadPremio extends Modelo
     }
 
     /**
+     * Cuenta las unidades de una campana que todavia se pueden entregar.
+     *
+     * Son las programadas, y solo ellas. Una unidad entregada ya no esta, y una
+     * anulada se ha retirado a proposito. La cuenta es lo que permite distinguir
+     * «la campana tiene plan» de «la campana tiene calendario»: el plan son
+     * numeros en asignaciones_tramo y el calendario son estas unidades con su
+     * minuto, y solo el motor de sorteo puede entregar una de estas.
+     *
+     * @param int $promocionId Campana que se quiere contar.
+     *
+     * @return int Numero de unidades que siguen vivas.
+     *
+     * @throws ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function contarEntregables(int $promocionId): int
+    {
+        return (int) $this->db->valor(
+            'SELECT COUNT(*)
+               FROM unidades_premio
+              WHERE promocion_id = ?
+                AND estado = ?',
+            [$promocionId, self::ESTADO_PROGRAMADA]
+        );
+    }
+
+    /**
      * Genera un codigo de reclamacion unico para una unidad.
      *
      * Es lo que recibe la clienta en el correo y lo que la azafata le entrega,
@@ -295,6 +365,343 @@ class UnidadPremio extends Modelo
         // mismo premio.
         throw new ErrorBaseDeDatos(
             new \PDOException('No se ha encontrado un codigo de reclamacion libre tras diez intentos.')
+        );
+    }
+
+    /**
+     * Lista las unidades de una campana para el panel de calendario.
+     *
+     * ============================================================================
+     * POR QUE ESTA CONSULTA TRAE TRAMOS Y PREMIOS Y NO SE PUEDE QUITAR
+     * ============================================================================
+     *
+     * La tabla de la pantalla de calendario necesita el nombre del premio y la
+     * fecha y el horario de su tramo en cada fila. Sacarlos con una consulta por
+     * fila significa 500 consultas para una campana normal, y el resultado se
+     * nota en el tiempo de carga. Con los dos JOIN, la pantalla hace una consulta
+     * y el indice ix_unidades_cola sigue sirviendo para filtrar por campana.
+     *
+     * El orden por instante y despues por identificador es el mismo con el que el
+     * motor recorre la cola, y a proposito: si el panel y el motor ordenaran de
+     * forma distinta, quien administra la campana veria un calendario que no se
+     * parece en nada a como se han repartido los premios, y no podria comprobar
+     * nada a mano.
+     *
+     * @param int                  $promocionId Campana cuyo calendario se lista.
+     * @param array<string, mixed> $filtros     Filtros opcionales, con las claves
+     *                                           «estado», «tramo_id»,
+     *                                           «tipo_premio_id» y «fecha».
+     * @param int                  $limite      Maximo de filas devueltas.
+     *
+     * @return array<int, array<string, mixed>> Filas del calendario, con el
+     *         identificador de la unidad, su instante, su estado, el tramo, el
+     *         nombre del premio y su imagen.
+     *
+     * @throws ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function listarParaCalendario(int $promocionId, array $filtros = [], int $limite = 500): array
+    {
+        $parametros = [$promocionId];
+        $sentencia = 'SELECT u.id,
+                             u.inicio,
+                             u.estado,
+                             u.codigo_reclamacion,
+                             u.anulada_motivo,
+                             u.participacion_id,
+                             t.id AS tramo_id,
+                             t.fecha,
+                             t.hora_inicio,
+                             t.hora_fin,
+                             tp.id AS tipo_premio_id,
+                             tp.nombre AS premio,
+                             tp.imagen_ruta
+                        FROM unidades_premio u
+                        JOIN tramos t ON t.id = u.tramo_id
+                        JOIN tipos_premio tp ON tp.id = u.tipo_premio_id
+                       WHERE u.promocion_id = ?'
+            . $this->filtrosDeCalendario($filtros, $parametros)
+            . ' ORDER BY u.inicio ASC, u.id ASC
+                       LIMIT ?';
+
+        $parametros[] = max(1, $limite);
+
+        return $this->db->todos($sentencia, $parametros);
+    }
+
+    /**
+     * Cuenta las unidades del calendario con los mismos filtros que el listado.
+     *
+     * Va aparte porque el total no se puede sacar de las filas devueltas: con el
+     * limite de 500, un administrador con tres mil premios veria «500» y creeria
+     * que solo hay quinientos. Esta consulta cuenta las filas, no las que han
+     * cabido en el limite.
+     *
+     * @param int                  $promocionId Campana que se quiere contar.
+     * @param array<string, mixed> $filtros     Filtros opcionales, con las mismas
+     *                                           claves que listarParaCalendario().
+     *
+     * @return int Numero de unidades que cumplen los filtros.
+     *
+     * @throws ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function contarParaCalendario(int $promocionId, array $filtros = []): int
+    {
+        $parametros = [$promocionId];
+        $sentencia = 'SELECT COUNT(*) AS total
+                        FROM unidades_premio u
+                        JOIN tramos t ON t.id = u.tramo_id
+                       WHERE u.promocion_id = ?'
+            . $this->filtrosDeCalendario($filtros, $parametros);
+
+        return (int) $this->db->valor($sentencia, $parametros);
+    }
+
+    /**
+     * Construye el trozo de sentencia de los filtros del calendario.
+     *
+     * Se escribe una vez y se usa en el listado y en el recuento, porque si los
+     * dos tuvieran su propia copia acabarian differiendo en cuanto se añadiera un
+     * filtro nuevo, y el panel mostraria «de 812 unidades, 500» al filtrar por un
+     * estado que en realidad no tiene ninguna. Cada filtro se anade con su
+     * marcador y su valor, nunca con el valor pegado en la sentencia.
+     *
+     * @param array<string, mixed> $filtros    Filtros recibidos.
+     * @param array<int, mixed>    $parametrosLista Valores que se van anadiendo,
+     *                                                 porque se pasan por
+     *                                                 referencia y quien llama los
+     *                                                 necesita ya completos.
+     *
+     * @return string Fragmento de sentencia, con el espacio inicial incluido.
+     */
+    private function filtrosDeCalendario(array $filtros, array &$parametrosLista): string
+    {
+        $campos = [
+            'estado'         => 'u.estado',
+            'tramo_id'       => 'u.tramo_id',
+            'tipo_premio_id' => 'u.tipo_premio_id',
+            'fecha'          => 't.fecha',
+        ];
+        $fragmento = '';
+
+        foreach ($campos as $clave => $columna) {
+            if (!isset($filtros[$clave]) || $filtros[$clave] === '' || $filtros[$clave] === null) {
+                continue;
+            }
+
+            $fragmento .= ' AND ' . $columna . ' = ?';
+            $parametrosLista[] = $filtros[$clave];
+        }
+
+        return $fragmento;
+    }
+
+    /**
+     * Devuelve una unidad con los datos de su tramo, para editar o retirar.
+     *
+     * @param int $unidadId Unidad que se quiere.
+     *
+     * @return array<string, mixed>|null Fila de la unidad, o null si no existe.
+     *
+     * @throws ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function buscarParaEdicion(int $unidadId): ?array
+    {
+        return $this->db->uno(
+            'SELECT u.*, t.fecha, t.hora_inicio, t.hora_fin
+               FROM unidades_premio u
+               JOIN tramos t ON t.id = u.tramo_id
+              WHERE u.id = ?
+              LIMIT 1',
+            [$unidadId]
+        );
+    }
+
+    /**
+     * Crea una unidad suelta ya con su estado «programada».
+     *
+     * El estado se pone aqui y no se recibe como parametro a proposito: esta tabla
+     * solo admite cuatro valores y tres de ellos los pone el motor de
+     * adjudicacion o el panel. Si quien llama pudiera elegir, habria una quinta
+     * forma de crear una unidad entregada sin participacion ni codigo, que es
+     * exactamente el tipo de fila que despues nadie sabe explicar.
+     *
+     * @param int    $promocionId  Campana a la que pertenece la unidad.
+     * @param int    $tramoId      Tramo dentro del cual cae la unidad.
+     * @param int    $tipoPremioId Premio que se reparte.
+     * @param string $inicio       Instante de inicio, en formato «A-n-j H:i:s».
+     *
+     * @return int Identificador de la unidad creada.
+     *
+     * @throws ErrorBaseDeDatos Si la escritura falla.
+     */
+    public function crear(int $promocionId, int $tramoId, int $tipoPremioId, string $inicio): int
+    {
+        $ahora = \App\Core\Aplicacion::ahora();
+
+        return $this->db->insertar(
+            'INSERT INTO unidades_premio (
+                 promocion_id, tramo_id, tipo_premio_id, inicio, estado, creado_en, modificado_en
+             ) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [
+                $promocionId,
+                $tramoId,
+                $tipoPremioId,
+                $inicio,
+                self::ESTADO_PROGRAMADA,
+                $ahora,
+                $ahora,
+            ]
+        );
+    }
+
+    /**
+     * Inserta de golpe un lote de unidades ya repartidas.
+     *
+     * El generador crea cientos de unidades por tramo, y dearlas de una en una
+     * haria una consulta por unidad. Aqui van todas en una sentencia, agrupadas
+     * en lotes: MySQL tiene un tope de marcadores por sentencia preparada, y un
+     * tramo con 500 unidades son 2500 marcadores, de ahi el corte en doscientas.
+     *
+     * Se repite el mismo valor de «ahora» en creado_en y modificado_en porque la
+     * unidad se crea ahora y su ultima modificacion es su creacion. Poner la
+     * variable dos veces obliga a duplicar el valor, mientras que dejar que el
+     * motor ponga NOW() haria que las dos columnas tuvieran segundos distintos
+     * dentro de la misma fila.
+     *
+     * @param int                  $promocionId Campana a la que pertenecen
+     *                                             todas las unidades del lote.
+     * @param array<int, array<int, mixed>> $filas Filas de cuatro valores:
+     *                                         identificador de tramo,
+     *                                         identificador de tipo de premio,
+     *                                         instante de inicio y momento de
+     *                                         creacion.
+     *
+     * @return int Numero de filas insertadas.
+     *
+     * @throws ErrorBaseDeDatos Si la escritura falla.
+     */
+    public function insertarLote(int $promocionId, array $filas): int
+    {
+        if ($filas === []) {
+            return 0;
+        }
+
+        // Los grupos de valores se unen con comas. Repetir la cadena sin separador
+        // produce «VALUES (…)(…)», que es un error de sintaxis que solo aparece
+        // con dos o mas filas, de modo que un tramo con un solo premio funcionaria
+        // en pruebas y fallaria en la campana.
+        $grupos = implode(', ', array_fill(0, count($filas), '(?, ?, ?, ?, ?, ?)'));
+
+        $sentencia = 'INSERT INTO unidades_premio (
+                         promocion_id, tramo_id, tipo_premio_id, inicio, creado_en, modificado_en
+                     ) VALUES ' . $grupos;
+
+        $parametros = [];
+
+        foreach ($filas as $fila) {
+            $parametros[] = $promocionId;
+            $parametros[] = $fila[0];
+            $parametros[] = $fila[1];
+            $parametros[] = $fila[2];
+            $parametros[] = $fila[3];
+            $parametros[] = $fila[3];
+        }
+
+        return $this->db->ejecutar($sentencia, $parametros);
+    }
+
+    /**
+     * Borra las unidades «programadas» de un tramo, para rehacer su calendario.
+     *
+     * El WHERE lleva el estado y no solo el tramo, y esa es toda la garantia de
+     * que «reemplazar el calendario» no pueda tocar un premio ya entregado. Si
+     * aqui se quitara el filtro de estado, la pantalla de reemplazo permitiria
+     * borrar en un clic los premios que una clienta ya tiene en la mano, y sus
+     * participaciones se quedarian con un premio que ya no existe.
+     *
+     * @param int $tramoId Tramo cuyo calendario se rehace.
+     *
+     * @return int Numero de unidades borradas.
+     *
+     * @throws ErrorBaseDeDatos Si la escritura falla.
+     */
+    public function borrarProgramadasDeTramo(int $tramoId): int
+    {
+        return $this->db->ejecutar(
+            'DELETE FROM unidades_premio
+              WHERE tramo_id = ?
+                AND estado = ?',
+            [$tramoId, self::ESTADO_PROGRAMADA]
+        );
+    }
+
+    /**
+     * Mueve una unidad programada a otro tramo y hora.
+     *
+     * El estado va en el WHERE por la misma razon que en el borrado: si otra
+     * pantalla ha entregado esa unidad entre la lectura y este UPDATE, el cambio
+     * no debe aplicarse. El recuento que devuelve el metodo lo comprueba quien
+     * llama, que es quien puede avisar al administrador de que ya no era suya.
+     *
+     * @param int    $unidadId  Unidad que se mueve.
+     * @param int    $tramoId   Tramo de destino.
+     * @param string $inicio    Instante de inicio en el tramo de destino.
+     *
+     * @return int Numero de filas afectadas: 1 si se ha movido, 0 si ya no era
+     *             programada.
+     *
+     * @throws ErrorBaseDeDatos Si la escritura falla.
+     */
+    public function mover(int $unidadId, int $tramoId, string $inicio): int
+    {
+        return $this->db->ejecutar(
+            'UPDATE unidades_premio
+                SET tramo_id = ?,
+                    inicio = ?,
+                    modificado_en = ?
+              WHERE id = ?
+                AND estado = ?',
+            [$tramoId, $inicio, \App\Core\Aplicacion::ahora(), $unidadId, self::ESTADO_PROGRAMADA]
+        );
+    }
+
+    /**
+     * Retira una unidad, que es anularla con su motivo, no borrarla.
+     *
+     * ============================================================================
+     * POR QUE RETIRAR NO ES BORRAR
+     * ============================================================================
+     *
+     * El esquema tiene un estado «anulada» con su columna de motivo, y existe
+     * precisamente para esto. Si retirar borrase la fila, el total de premios de
+     * la campana dejaria de cuadrar con la suma de los tramos, y no habria forma
+     * de demostrar que el premio se retiró a proposito y no se perdio por un
+     * fallo. Guardar la fila con su motivo resuelve las dos cosas.
+     *
+     * La fecha de la anulacion no se guarda porque el esquema no tiene donde
+     * guardarla, y anadir una columna por comodidad del panel seria cambiar el
+     * esquema sin necesidad. La marca de tiempo esta en modificado_en, que cambia
+     * en este mismo UPDATE, y ese dato basta para responder «cuando se retiro
+     * esto».
+     *
+     * @param int    $unidadId Unidad que se retira.
+     * @param string $motivo   Motivo de la retirada, que queda registrado.
+     *
+     * @return void
+     *
+     * @throws ErrorBaseDeDatos Si la escritura falla.
+     */
+    public function anular(int $unidadId, string $motivo): void
+    {
+        $ahora = \App\Core\Aplicacion::ahora();
+
+        $this->db->ejecutar(
+            'UPDATE unidades_premio
+                SET estado = ?,
+                    anulada_motivo = ?,
+                    modificado_en = ?
+              WHERE id = ?',
+            [self::ESTADO_ANULADA, $motivo, $ahora, $unidadId]
         );
     }
 }

@@ -242,6 +242,18 @@ abstract class Controlador
             $codigo = 303;
         }
 
+        // En consola no hay cabeceras que mandar, y header() ahi no hace nada
+        // util pero si avisa: «Cannot modify header information», porque la
+        // salida ya ha empezado por la propia consola. El mismo criterio que
+        // usa Csrf::token() para no inventar un token que luego no se podra
+        // comprobar. Lo que se guarda es el aviso de la redireccion, que es lo
+        // que las pruebas de consola miran.
+        if (!Aplicacion::esPeticionWeb()) {
+            Vista::guardarAviso('Redireccion a ' . $ruta, 'info');
+
+            return;
+        }
+
         header('Location: ' . Aplicacion::url($ruta), true, $codigo);
     }
 

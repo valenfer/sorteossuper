@@ -233,8 +233,59 @@ $router->post('salir', 'ControladorAcceso', 'salir');
 // Cada rol exige su propia pantalla. El enrutador comprueba el rol en el
 // servidor, antes de ejecutar nada, de modo que escribir «/azafata» a mano sin
 // ser azafata no abre la pantalla: responde igual que una URL inexistente.
-$router->get('admin', 'ControladorInicio', 'panel', Autorizacion::ROL_ADMINISTRADOR);
+$router->get('admin', 'ControladorCampanas', 'listar', Autorizacion::ROL_ADMINISTRADOR);
 $router->get('azafata', 'ControladorInicio', 'mostrador', Autorizacion::ROL_AZAFATA);
+
+// ---- Panel del administrador ----------------------------------------------
+// Todas las rutas del panel exigen el rol de administrador, y todas lo ponen una
+// a una. No hay un «prefijo que las cubre a todas» en este enrutador, y anadirlo
+// por el camino corto seria justo el tipo de olvido que hace que una pantalla
+// sensible quede abierta. Ver \App\Core\Router::ejecutar().
+//
+// El orden de las declaraciones no importa para el despacho: el enrutador prueba
+// primero las coincidencia exactas y despues las que llevan parametros. Se
+// agrupan por pantalla y no por metodo HTTP para que se lea como el menu del
+// panel.
+$admin = Autorizacion::ROL_ADMINISTRADOR;
+
+// Listado de campanas y datos generales.
+$router->get('admin/campanas/nueva', 'ControladorCampanas', 'nueva', $admin);
+$router->post('admin/campanas/nueva', 'ControladorCampanas', 'crear', $admin);
+$router->get('admin/promociones/{id}', 'ControladorCampanas', 'ficha', $admin);
+$router->get('admin/promociones/{id}/editar', 'ControladorCampanas', 'editar', $admin);
+$router->post('admin/promociones/{id}/editar', 'ControladorCampanas', 'actualizar', $admin);
+
+// Activacion. Es un POST porque manda correo y saca premios de la caja: no
+// puede saltar con un clic de mas en un enlace.
+$router->post('admin/promociones/{id}/activar', 'ControladorCampanas', 'activar', $admin);
+
+// Premios.
+$router->get('admin/promociones/{id}/premios', 'ControladorFormulario', 'premios', $admin);
+$router->post('admin/promociones/{id}/premios', 'ControladorFormulario', 'crearPremio', $admin);
+$router->post('admin/promociones/{id}/premios/{premio}/alternar', 'ControladorFormulario', 'alternarPremio', $admin);
+
+// Formulario de participacion.
+$router->get('admin/promociones/{id}/formulario', 'ControladorFormulario', 'formulario', $admin);
+$router->post('admin/promociones/{id}/formulario', 'ControladorFormulario', 'guardarFormulario', $admin);
+
+// Reglas, ajustes y apariencia.
+$router->get('admin/promociones/{id}/reglas', 'ControladorCampana', 'reglas', $admin);
+$router->post('admin/promociones/{id}/reglas', 'ControladorCampana', 'guardarReglas', $admin);
+$router->get('admin/promociones/{id}/ajustes', 'ControladorCampana', 'ajustes', $admin);
+$router->post('admin/promociones/{id}/ajustes', 'ControladorCampana', 'guardarAjustes', $admin);
+$router->get('admin/promociones/{id}/apariencia', 'ControladorCampana', 'apariencia', $admin);
+$router->post('admin/promociones/{id}/apariencia', 'ControladorCampana', 'guardarApariencia', $admin);
+
+// Tramos y cantidades por tramo.
+$router->get('admin/promociones/{id}/tramos', 'ControladorCampana', 'tramos', $admin);
+$router->post('admin/promociones/{id}/tramos', 'ControladorCampana', 'crearTramo', $admin);
+$router->post('admin/promociones/{id}/tramos/{tramo}/borrar', 'ControladorCampana', 'borrarTramo', $admin);
+$router->post('admin/promociones/{id}/tramos/{tramo}/cantidades', 'ControladorCampana', 'guardarCantidades', $admin);
+
+// Calendario.
+$router->get('admin/promociones/{id}/calendario', 'ControladorCampana', 'calendario', $admin);
+$router->post('admin/promociones/{id}/calendario/generar', 'ControladorCampana', 'generarCalendario', $admin);
+$router->post('admin/promociones/{id}/calendario/{unidad}/retirar', 'ControladorCampana', 'retirarUnidad', $admin);
 
 // -----------------------------------------------------------------------------
 // 5. Despacho.

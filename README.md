@@ -126,17 +126,17 @@ php bin\instalar.php [--crear-config] [--forzar] [--test] [--diagnostico] [--ayu
 php bin\verificar_docs.php
 ```
 
-Decisión D13. Comprueba que todas las clases
-y métodos tienen PHPDoc, que las once etiquetas están en inglés, que la prosa no
-contiene alfabetos fuera del castellano, que no hay llamadas a `exit` en la
-aplicación web, que no quedan llamadas de depuración en el código, y que no hay
+Decisión D13. Recorre `app/`, `bin/`, `tests/` y `views/`, y comprueba que todas
+las clases y métodos tienen PHPDoc, que las once etiquetas están en inglés, que la
+prosa no contiene alfabetos fuera del castellano, que no hay llamadas a `exit` en
+la aplicación web, que no quedan llamadas de depuración en el código, y que no hay
 credenciales ni dependencias prohibidas. Sale con código 1 si encuentra algo, de
 modo que sirve como paso de integración continua.
 
 ### Suite de pruebas
 
 ```
-php tests\run.php                    # los ocho casos
+php tests\run.php                    # los once casos
 php tests\run.php --caso 0           # solo uno
 php tests\run.php --caso=2 --verbose
 php tests\run.php --ayuda
@@ -152,6 +152,9 @@ php tests\run.php --ayuda
 | 5 | Cola de premios: reparto por orden y por hora, y premios que no se entregan antes de su hora. |
 | 6 | Rechazo sin consumir premio, idempotencia del intento y encolado del correo. |
 | 7 | Dos participaciones simultáneas con una sola unidad, en procesos PHP separados. |
+| 8 | El panel de punta a punta: campaña con tramo, premio, cantidades y los ocho campos obligatorios; sin calendario no se puede activar, y con él sí. |
+| 9 | Las once pantallas del panel pintan su contenido y no se confunden entre sí. |
+| 10 | Lo que el panel no deja hacer: un estado a mano, un tramo solapado, un tramo que no cabe, un tramo con unidades y una fila de formulario a medias. |
 
 La suite no necesita PHPUnit (decisión D6) y
 funciona contra la base de pruebas, nunca contra la de la campaña. Escriben un
@@ -207,8 +210,8 @@ app/inicio.php          Arranque previo al autocargador
 app/Core/               Núcleo: configuración, sesiones, rutas, vistas, seguridad
 app/Controllers/        Controladores
 app/Models/             Modelos de las tablas
-app/Services/           Servicios: el motor de adjudicación y el validador de reglas
-views/                  Plantillas PHP
+app/Services/           Servicios: el motor, la configuracion del panel y el generador de reparto
+views/                  Plantillas PHP (admin/ es el panel de promociones)
 assets/                 CSS y JavaScript escritos a mano
 sql/                    Esquema y migraciones
 bin/                    Instalador y verificador
@@ -232,19 +235,39 @@ sola conexión no habría competencia que medir.
 ## El flujo del administrador
 
 **Lo que hay hoy.** El administrador entra en `/login` con su cuenta y llega a
-`/admin`. Puede cerrar sesión con el botón «Salir», que envía un formulario con
-token CSRF: si se envía sin token, la respuesta es un 403 y la sesión sigue
-abierta.
+`/admin`, que es el listado de campañas. Desde ahí:
 
-**Lo que se añadirá.** Configurar la promoción y su calendario de premios,
-subir el logotipo, definir qué dato identifica a una persona, consultar
-participaciones e intentos rechazados, y cerrar la promoción.
+| Pantalla | Qué se configura en ella |
+| --- | --- |
+| `/admin/campanas/nueva` | Nombre, comercio, fechas y zona horaria. Una campaña nueva nace siempre en borrador. |
+| `/admin/promociones/{id}` | La ficha: el resumen, lo que falta para poder abrirla, el botón de activar y el menú de todo lo demás. |
+| `/admin/promociones/{id}/editar` | Los datos generales, que no cambian el estado. |
+| `/admin/promociones/{id}/premios` | El catálogo de premios, con su foto. |
+| `/admin/promociones/{id}/tramos` | Los tramos con su hora y su fecha, y cuántas unidades de cada premio van en cada uno. |
+| `/admin/promociones/{id}/calendario` | Generar el reparto y ver el plan frente a lo generado. |
+| `/admin/promociones/{id}/formulario` | Los campos que rellena la clienta, con su orden. |
+| `/admin/promociones/{id}/reglas` | Una por persona, por ticket, códigos de acceso y códigos postales. |
+| `/admin/promociones/{id}/ajustes` | Correo, modo simulación y días de retención. |
+| `/admin/promociones/{id}/apariencia` | Colores, banners y los textos de resultado. |
+
+**Ninguna pantalla necesita JavaScript.** En la del formulario, la última fila de
+la tabla está siempre vacía: se añade un campo escribiendo su clave y su etiqueta
+en ella y pulsando el mismo botón de guardar, y se quita dejando las dos en
+blanco. Las imágenes se cambian con un `<input type="file">` de toda la vida.
+
+**Lo que se añadirá.** Consultar participaciones e intentos rechazados, y cerrar
+la promoción.
+
+**El botón de activar solo aparece cuando se puede.** La ficha lista lo que
+falta, y el aviso «el calendario no está generado» aparece aunque haya tramos y
+cantidades: un tramo con cantidades no es un calendario, y abrir la campaña sin
+unidades programadas sería abrirla sin nada que repartir.
 
 ## El flujo de la azafata
 
 **Lo que hay hoy.** La azafata entra en `/login` con su cuenta y llega a
-`/azafata`. Su sesión se cierra sola tras 30 minutos de inactividad, porque la
-tablet se queda encima del mostrador.
+`/azafata`, el mostrador. Su sesión se cierra sola tras 30 minutos de inactividad,
+porque la tablet se queda encima del mostrador.
 
 **Lo que se añadirá.** Registrar participaciones y ver el premio adjudicado en
 el momento en que el servidor lo decide.
@@ -340,11 +363,19 @@ rechazo de los intentos que incumplen una regla sin consumir premio, y el
 encolado del correo de premio y de «no ha salido premio» dentro de la misma
 transacción.
 
-**Pendiente.** El panel de configuración de la promoción, las pantallas de
-participación y de resultado, la implementación de las reglas de la campaña (el
-motor ya acepta un validador y solo falta el validador real), el envío de correo y
-los scripts de línea de comandos para procesar la cola de mensajes y purgar
-datos. Las pantallas de destino son provisionales y lo indican en pantalla.
+**Terminado (hito 3).** El panel de promociones: las once pantallas de
+administración, con sus rutas y su control de rol, y el servicio que valida todo
+lo que se guarda en ellas. Los datos generales, el catálogo de premios, los
+campos del formulario, las reglas de participación, los ajustes, la apariencia, los
+tramos con sus cantidades y la generación del calendario de premios con su
+diagnóstico previo. La ficha de la campaña resume si se puede abrir y por qué no.
+Ninguna pantalla necesita JavaScript.
+
+**Pendiente.** Las pantallas de participación y de resultado, la implementación de
+las reglas de campaña (el motor ya acepta un validador y solo falta el validador
+real), el envío de correo y los scripts de línea de comandos para procesar la cola
+de mensajes y purgar datos. Las pantallas de destino siguen siendo provisionales
+y lo indican en pantalla.
 
 **Cómo saber si está sano.** Con el servidor arrancado:
 

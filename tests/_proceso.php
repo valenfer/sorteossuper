@@ -42,6 +42,16 @@
  * Es el unico punto del proyecto donde una prueba podria tocar datos de verdad, y
  * por eso esta cerradura se repite aqui aunque parezca redundante.
  *
+ * ============================================================================
+ * POR QUE LA CAMPANA VIENE POR IDENTIFICADOR Y NO POR NOMBRE
+ * ============================================================================
+ *
+ * Por nada, en principio: porque por nombre habria que conformarse con un
+ * SELECT ... LIMIT 1 sin orden. Si dos campanas se llamaran igual (una
+ * ejecucion anterior que se quedo a medias, otro caso que comparta el helper
+ * de escenarios) el proceso participaria en la que le tocara, y la prueba
+ * mediria otra cosa sin enterarse. El padre le pasa el id que acaba de crear.
+ *
  * @see tests/run.php, caso 7
  * @see \App\Services\Adjudicador
  * @see caso de aceptacion 6
@@ -85,8 +95,9 @@ $ficheroSalida = $argv[2] ?? '';
 $claveIdempotencia = $argv[3] ?? '';
 $momento = $argv[4] ?? '';
 $tramoId = isset($argv[5]) ? (int) $argv[5] : 0;
+$promocionId = isset($argv[6]) ? (int) $argv[6] : 0;
 
-if ($base === '' || $ficheroSalida === '' || $claveIdempotencia === '' || $momento === '') {
+if ($base === '' || $ficheroSalida === '' || $claveIdempotencia === '' || $momento === '' || $promocionId <= 0) {
     escribirResultado(
         ['ok' => false, 'error' => 'Faltan argumentos.'],
         $ficheroSalida !== '' ? $ficheroSalida : 'php://stderr'
@@ -120,8 +131,16 @@ try {
     // llegue, que es exactamente la situacion que D8 describe.
     usleep(random_int(0, 250) * 1000);
 
+    // La campana se recibe ya por identificador y NO se busca por nombre. Con
+    // el nombre habria que conformarse con un SELECT ... LIMIT 1 sin orden, y
+    // si por lo que sea quedara otra campana con el mismo nombre (una
+    // ejecucion anterior que se quedo a medias, otro caso que comparta el
+    // helper de escenarios) este proceso participaria en la campana
+    // equivocada sin decir nada. Es el peor fallo posible en una prueba de
+    // concurrencia: uno que no falla donde deberia, o que falla con un error
+    // que no tiene nada que ver. El identificador no admite Confusion.
     $resultado = $motor->registrar(
-        (int) Aplicacion::db()->valor('SELECT id FROM promociones WHERE nombre = ? LIMIT 1', [nombreCampanaDePrueba()]),
+        $promocionId,
         $claveIdempotencia,
         $tramoId > 0 ? $tramoId : null,
         ['nombre' => 'Cliente de la prueba de concurrencia'],

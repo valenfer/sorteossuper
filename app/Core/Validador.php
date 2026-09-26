@@ -475,6 +475,13 @@ class Validador
     /**
      * Comprueba que un campo obligatorio de tipo casilla viene marcado.
      *
+     * Acepta el valor desde el formulario HTTP, que es una cadena, y desde PHP,
+     * que es un booleano de verdad. Los dos chemins hacen falta: las pantallas
+     * mandan «on» y «0», y un servicio que construye el array en codigo manda
+     * true y false. Sin el caso del booleano, un false de verdad se comparaba
+     * contra cuatro cadenas y salia distinto de las cuatro, de modo que una
+     * casilla apagada se leia como marcada.
+     *
      * @param string $campo Nombre del campo.
      * @param mixed  $valor Valor recibido, del tipo que sea.
      *
@@ -482,7 +489,11 @@ class Validador
      */
     public function casillaObligatoria(string $campo, $valor): bool
     {
-        $marcado = $valor !== null && $valor !== '' && $valor !== '0' && $valor !== 'false';
+        if (is_bool($valor)) {
+            $marcado = $valor;
+        } else {
+            $marcado = $valor !== null && $valor !== '' && $valor !== '0' && $valor !== 'false';
+        }
 
         if (!$marcado) {
             $this->anadirError($campo, 'Tienes que marcar esta casilla para continuar.');

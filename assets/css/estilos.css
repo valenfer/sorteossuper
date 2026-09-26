@@ -39,7 +39,7 @@
    -------------------------------------------------------------------------- */
 :root {
     /* El azul de las acciones principales se ha elegido por su contraste con el
-       blanco: 5,4:1 segun laformula de contraste de WCAG, muy por encima del
+       blanco: 5,4:1 segun la formula de contraste de WCAG, muy por encima del
        minimo de 4,5:1 que pide el nivel AA. */
     --primario: #14509b;
     --primario-oscuro: #0e3b73;
@@ -49,6 +49,12 @@
        OLED vibra y cansa la vista en una tablet encendida todo el dia. */
     --peligro: #b3261e;
     --exito: #1b6b3a;
+
+    /* Naranja de premio y de enfasis. Solo lo escribe
+       ConfiguracionVisual::variablesCss() a partir del color_acento de la
+       campana, pero se declara aqui para que la vista previa del panel tenga el
+       mismo valor que una campana que no ha cambiado el suyo. */
+    --acento: #e8a33d;
 
     --texto: #1a1a1a;
     --texto-suave: #55595e;
@@ -364,6 +370,12 @@ body.sin-sesion {
     color: #7a1c16;
 }
 
+.aviso-aviso {
+    border-left-color: var(--acento);
+    background: #fdf3e2;
+    color: #6d4708;
+}
+
 .aviso-exito {
     border-left-color: var(--exito);
     background: #e7f4ec;
@@ -407,4 +419,399 @@ table.tabla th {
 
 table.tabla tbody tr:last-child td {
     border-bottom: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Panel del administrador
+   --------------------------------------------------------------------------
+   Todo lo que hay a partir de aqui existe por una razon de uso, no por
+   adorno. Las clases que verian como eso -las migas, las tarjetas, el
+   rejilla de colores- estan porque hacen falta para que una pantalla con
+   ocho formularios se pueda recorrer de un vistazo.
+   -------------------------------------------------------------------------- */
+
+/* Texto de apoyo. Es la clase mas puesta del panel, y por eso tiene el
+   tamano mas pequeno del cuerpo. */
+.ayuda,
+.campo-ayuda {
+    display: block;
+    margin: .25rem 0 0;
+    font-size: .875rem;
+    color: var(--texto-suave);
+}
+
+/* La explicacion de un campo va pegada a su etiqueta, y la de un bloque
+   suelto debajo del bloque. Por eso las dos clases comparten estilo pero no
+   se fusionan: cambiarlas por separado no obliga a revisar todo. */
+.campo-ayuda {
+    font-size: .8125rem;
+}
+
+.campo-error {
+    display: block;
+    margin: .25rem 0 0;
+    font-size: .8125rem;
+    font-weight: 600;
+    color: var(--peligro);
+}
+
+/* Error de un campo concreto. El borde se marca ademas de con color, para
+   que se note tambien en una pantalla en escala de grises, que es como se
+   imprime la pagina. */
+.campo [aria-invalid="true"] {
+    border-color: var(--peligro);
+    box-shadow: 0 0 0 1px var(--peligro);
+}
+
+/* Migas de pan. No es decoracion: en el panel hay ocho pantallas colgando de
+   la misma campana, y saber en cual de ellas se esta es lo unico que
+   distingue una de otra cuando el titulo se ha ido fuera de la pantalla. */
+.ruta-migas {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .375rem;
+    align-items: center;
+    margin: 0 0 1.25rem;
+    font-size: .875rem;
+    color: var(--texto-suave);
+}
+
+.ruta-migas a {
+    color: var(--primario);
+}
+
+/* Botones que ocupan todo el ancho. Se usan en los formularios que son la
+   unica accion de su pantalla, para que el objetivo sea facil de acertar con
+   el dedo en una tablet. */
+.boton-ancho {
+    display: block;
+    width: 100%;
+    text-align: center;
+}
+
+/* Tarjetas de las secciones de una pantalla. La campana se configura en ocho
+   formularios, y separarlos en bloques con borde evita que se lean como un
+   formulario unico de treinta campos. */
+.tarjeta-panel {
+    margin: 0 0 1.5rem;
+    padding: 1.25rem;
+    background: var(--superficie);
+    border: 1px solid var(--borde);
+    border-radius: var(--radio);
+    box-shadow: var(--sombra);
+}
+
+.tarjeta-panel-titulo {
+    margin: 0 0 1rem;
+    font-size: 1.0625rem;
+    color: var(--primario-oscuro);
+}
+
+.tarjeta-panel > :last-child {
+    margin-bottom: 0;
+}
+
+/* Menu de la ficha: ocho enlaces, ocho pantallas. Se muestran como tarjetas y
+   no como una lista de enlaces porque cada uno es una pantalla completa con su
+   propio formulario, y una linea de texto azul no deja claro eso. */
+.menu-panel {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: .75rem;
+    margin: 0 0 1.5rem;
+}
+
+.tarjeta-menu {
+    display: block;
+    padding: .875rem 1rem;
+    background: var(--superficie);
+    border: 1px solid var(--borde);
+    border-radius: var(--radio);
+    text-decoration: none;
+}
+
+.tarjeta-menu:hover,
+.tarjeta-menu:focus-visible {
+    border-color: var(--primario);
+    background: var(--primario-claro);
+}
+
+.tarjeta-menu-titulo {
+    display: block;
+    font-weight: 600;
+    color: var(--primario-oscuro);
+}
+
+.tarjeta-menu-texto {
+    display: block;
+    margin-top: .125rem;
+    font-size: .8125rem;
+    color: var(--texto-suave);
+}
+
+/* Una regla de la pantalla de reglas: casilla, explicacion y, si hace falta,
+   el aviso de que la regla no hace nada porque le falta su campo. */
+.regla {
+    margin: 0 0 1.25rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid var(--borde);
+}
+
+.regla:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: 0;
+}
+
+/* La casilla va pegada a su etiqueta, al reves que en los campos, porque una
+   regla se lee como una frase y su explicacion va debajo de la frase, no
+   debajo de una caja. */
+.campo-casilla {
+    display: flex;
+    gap: .5rem;
+    align-items: baseline;
+}
+
+.campo-casilla label {
+    font-weight: 600;
+}
+
+.campo-casilla input[type="checkbox"] {
+    width: 1.125rem;
+    height: 1.125rem;
+    flex: 0 0 auto;
+}
+
+/* Columna estrecha para casillas dentro de una tabla. */
+.columna-casilla {
+    width: 3rem;
+    text-align: center;
+}
+
+/* Columna de acciones: siempre a la derecha y con el texto alineado al
+   centro, para que los botones de una columna se lean como una columna. */
+.columna-acciones {
+    width: 9rem;
+    text-align: right;
+    white-space: nowrap;
+}
+
+/* Estados. El mismo texto va siempre acompanado del mismo color, para que no
+   dependa solo del matiz. */
+.estado {
+    display: inline-block;
+    padding: .125rem .5rem;
+    border: 1px solid var(--borde-fuerte);
+    border-radius: 999px;
+    font-size: .75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    background: var(--superficie);
+}
+
+.estado-activa {
+    border-color: var(--exito);
+    color: var(--exito);
+    background: #e7f4ec;
+}
+
+.estado-borrador {
+    border-color: var(--borde-fuerte);
+    color: var(--texto-suave);
+    background: #f0f1f3;
+}
+
+/* Filas que no cuadran con lo esperado. El fondo las marca sin necesidad de
+   una columna de texto, que es lo que de verdad se mira de un vistazo. */
+.fila-alerta {
+    background: #fdf3e2;
+}
+
+/* Listas de pendientes y de avisos. Llevan su propia marca para que se
+   distingan de un parrafo: la lista de pendientes es la que decide si se
+   puede activar, y no puede pasar inadvertida. */
+.lista-problemas,
+.lista-avisos {
+    margin: .5rem 0 0;
+    padding-left: 1.25rem;
+}
+
+.lista-problemas li {
+    margin-bottom: .25rem;
+    color: #6d4708;
+}
+
+.lista-avisos li {
+    margin-bottom: .25rem;
+}
+
+/* Listas de datos. Se usa en la ficha, donde cada dato es un nombre y un
+   valor en dos columnas y no una tabla con encabezado. */
+.lista-datos {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: .375rem 1rem;
+    margin: 0;
+}
+
+.lista-datos dt {
+    font-size: .875rem;
+    color: var(--texto-suave);
+}
+
+.lista-datos dd {
+    margin: 0;
+}
+
+.lista-datos-compacta {
+    font-size: .9375rem;
+}
+
+/* Titulo intermedio dentro de un formulario largo. */
+.titulo-seccion {
+    margin: 2rem 0 .75rem;
+    font-size: 1rem;
+    color: var(--primario-oscuro);
+    padding-bottom: .375rem;
+    border-bottom: 1px solid var(--borde);
+}
+
+/* Miniaturas de premio en la tabla de premios. */
+.miniatura {
+    width: 3rem;
+    height: 3rem;
+    margin-right: .5rem;
+    vertical-align: middle;
+    object-fit: cover;
+    border-radius: var(--radio);
+    border: 1px solid var(--borde);
+}
+
+/* Imagen ya subida, con su vista previa. */
+.grupo-imagen {
+    margin: 0 0 1.5rem;
+    padding: 1rem;
+    border: 1px solid var(--borde);
+    border-radius: var(--radio);
+}
+
+.grupo-imagen:last-child {
+    margin-bottom: 0;
+}
+
+.grupo-imagen legend {
+    padding: 0 .375rem;
+    font-weight: 600;
+    color: var(--primario-oscuro);
+}
+
+.previa {
+    margin: 0 0 1rem;
+}
+
+.previa img {
+    display: block;
+    max-width: 100%;
+    max-height: 10rem;
+    border: 1px solid var(--borde);
+    border-radius: var(--radio);
+}
+
+/* Rejilla de los seis colores. El campo de color es cuadrado y con su
+   etiqueta al lado, para que el color y su nombre se lean juntos. */
+.rejilla-colores {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: .75rem;
+}
+
+.rejilla-colores input[type="color"] {
+    width: 100%;
+    height: var(--alto-minimo);
+    padding: .25rem;
+    border: 1px solid var(--borde);
+    border-radius: var(--radio);
+    background: var(--superficie);
+    cursor: pointer;
+}
+
+/* Barra de filtros del calendario. Los tres selectores van en linea y se
+   apilan solos en pantallas estrechas, porque el ancho minimo de un selector
+   en una tablet ya ocupa media pantalla. */
+.filtros {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .75rem;
+    align-items: flex-end;
+    margin: 0 0 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--borde);
+}
+
+.filtros .campo {
+    margin: 0;
+    min-width: 9rem;
+}
+
+.filtros .campo-boton {
+    margin: 0;
+}
+
+/* La tabla del calendario lleva la hora en columna propia y con cifras de
+   ancho fijo, para que los minutos se alineen en vertical y se vea de un
+   vistazo si hay huecos. */
+.tabla-calendario td:first-child {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* La tabla de campos del formulario es un formulario dentro de una tabla, y
+   sus entradas tienen que poder meterse dentro de la celda sin ensanchar la
+   tabla entera en una tablet. */
+.tabla-campos input[type="text"],
+.tabla-campos input[type="number"],
+.tabla-campos select {
+    width: 100%;
+    min-width: 4rem;
+}
+
+/* Solo para lectores de pantalla. Se usa en el encabezado de las tablas que
+   se repiten con el mismo contenido, para que se sepa cual se esta leyendo. */
+.visualmente-oculto {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Pantallas provisionales del hito 1 y de la azafata
+   --------------------------------------------------------------------------
+   Las clases que quedan sueltas aqui no son del panel: son de las pantallas
+   minimas que habia antes de que existiera el panel. Se dejan agrupadas al
+   final para que se vea que son suyas y no del panel.
+   -------------------------------------------------------------------------- */
+.panel-provisional {
+    max-width: 44rem;
+    margin: 0 auto;
+    padding: 1.5rem;
+    background: var(--superficie);
+    border: 1px solid var(--borde);
+    border-radius: var(--radio);
+    box-shadow: var(--sombra);
+}
+
+.panel-provisional > :first-child {
+    margin-top: 0;
+}
+
+.marca-texto {
+    font-weight: 700;
+    letter-spacing: .01em;
 }

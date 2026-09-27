@@ -24,7 +24,7 @@ configura la promoción y el personal de tienda registra las participaciones.
 | 2. Motor de adjudicación | Terminado | `f8844fe` | Cola de premios, transacción con bloqueo, evita adjudicaciones dobles. |
 | 3. Configuración de la promoción | Terminado | `9de72c6` | Panel del administrador: días, tramos, tipos de premio, cantidades, calendario. |
 | 4. Participaciones y resultados | Terminado | `0505a60` | Registro por la azafata, reglas, identidad, las dos pantallas. |
-| 5. Correo | En curso | — | Transporte `log` y `smtp`, cola de mensajes, reintentos, worker. |
+| 5. Correo | Terminado | `550eaa8` | Transporte `log` y `smtp`, cola de mensajes, reintentos, worker. |
 | 6. Panel de seguimiento | Pendiente | — | Métricas, filtros, auditoría, cierre de promoción. |
 | 7. Scripts de línea de comandos | Parcial | — | El worker del correo está; la purga de datos por retención no. |
 

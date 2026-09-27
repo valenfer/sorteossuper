@@ -102,7 +102,9 @@ concurrencia, por lo que se dice en la sección 4.
 **En la raíz hay un `bbdd.png` con un diagrama de la base de datos hecho a
 mano.** Se versiona desde el hito 3, con la autorización del promotor, porque es
 la referencia del esquema y sin ella hay que leer quince tablas para entender una
-consulta. No borrarlo ni moverlo sin preguntar.
+consulta. No borrarlo ni moverlo sin preguntar. Está versionado desde el hito 3,
+con autorización del promotor, y así lo dice también la sección «Reglas que no hay
+que romper».
 
 ### Por dónde continuar
 
@@ -334,9 +336,13 @@ encontrados:
   las peticiones web y registra un aviso en stderr si se llama de otro sitio.
 - **`config/config.php` no se versiona.** Va con credenciales y con el secreto
   de HMAC. Está en el `.gitignore`.
-- **`bbdd.png` no se versiona.** Es un diagrama personal del usuario, no
-  documentación del proyecto. Que aparezca como `?? bbdd.png` en `git status`
-  es lo esperado, no un descuido pendiente de limpiar.
+- **`bbdd.png` sí se versiona, desde el hito 3 y con autorización del promotor.**
+  Aquí decía lo contrario («no se versiona», «que aparezca como `??` en
+  `git status` es lo esperado») y era verdad hasta el hito 3. La regla que queda
+  escrita es la nueva: está en el repositorio porque es la referencia del
+  esquema, y sin ella hay que leer quince tablas para entender una consulta. No
+  borrarlo ni moverlo sin preguntar. La contradicción se/coló porque el hito 3
+  corrigió la sección 3 y el registro de hitos, y se dejó esta.
 - **Una retirada por commit y un commit por hito.** El mensaje cita las
   decisiones afectadas, como el del hito 0.
 - **Cero dependencias externas** (D14). El verificador falla si aparece una URL

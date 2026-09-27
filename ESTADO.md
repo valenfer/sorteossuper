@@ -12,6 +12,10 @@ Se actualiza al final de cada hito, en el mismo commit del hito.
 Si algo de este documento contradice a la especificación o al README, mandan
 ellos, y este fichero es lo primero que hay que corregir.
 
+**Si estás retomando el proyecto ahora, ve a la sección «Por dónde continuar».**
+Ahí está el punto de partida en una pantalla: qué está cerrado, qué toca y qué
+dos avisos hay que leer antes de escribir código.
+
 ## 1. Qué es y en qué punto está
 
 Aplicación web para repartir premios en un supermercado: un administrador
@@ -79,21 +83,66 @@ sección 5.
 con sus rutas, el servicio `ConfiguracionPromocion` con las reglas de activación, y
 la generación del calendario desde el plan de tramos y cantidades. Ver la sección 5.
 
+**Hecho (hito 5, y cierre del 4).** Las pantallas de participación y de resultado,
+las reglas de campaña como validador real (`ReglasCampana` con
+`IdentidadCampana`), los dos transportes de correo, la cola con reintentos y el
+worker `bin/enviar_correos.php`. Ver el registro de hitos, al final.
+
 **Las 15 tablas del esquema ya existen** (`sql/schema.sql`), incluida la de
 participaciones, la de cola de correos y la de auditoría. El modelo de datos está,
-el motor que usa las cuatro tablas centrales, y el panel que las configura.
+el motor que usa las cuatro tablas centrales, el panel que las configura, la
+pantalla que las usa y el worker que manda el correo.
 
-**Lo que no hay todavía.** No hay pantalla de participaciones ni de resultados: la
-de acceso del hito 1 y el mostrador de la azafata son las únicas que ensayan el
-motor. Tampoco hay envío de correo de verdad (D1 encola, el hito 5 envía), ni
-reglas configuradas de verdad (el validador sigue siendo un doble, el hito 4 lo
-implementa), ni HTTP en la prueba de concurrencia, por lo que se dice en la
-sección 4.
+**Lo que no hay todavía.** El panel de seguimiento del administrador (métricas,
+filtros, auditoría y cierre de promoción), la purga de datos por retención, y la
+ruleta decorativa del mostrador (D19), que no hace falta para que la campaña
+funcione y que se puede dejar para el final. Sigue sin haber HTTP en la prueba de
+concurrencia, por lo que se dice en la sección 4.
 
 **En la raíz hay un `bbdd.png` con un diagrama de la base de datos hecho a
 mano.** Se versiona desde el hito 3, con la autorización del promotor, porque es
 la referencia del esquema y sin ella hay que leer quince tablas para entender una
 consulta. No borrarlo ni moverlo sin preguntar.
+
+### Por dónde continuar
+
+Este es el resumen para retomar el trabajo. Si solo se lee una cosa de todo el
+documento, que sea esto.
+
+**Punto exacto en el que está.** Los hitos 0 a 5 están cerrados y subidos a
+`origin/master`. No hay nada a medias: el árbol de trabajo está limpio y la suite
+pasa entera. El commit del hito 5 es `550eaa8`; el `1ae1259` que viene detrás
+solo apunta este documento al hash del hito.
+
+**Lo siguiente, por este orden.**
+
+1. **Hito 6, panel de seguimiento.** Es lo que más falta y lo que más informará
+   al promotor: listado de participaciones con filtros, métricas de la campaña,
+   y el cierre, que es la parte con reglas de verdad (D4 pasa las unidades no
+   entregadas a `no_entregada`, sin adjudicación retroactiva, y ambas cosas quedan
+   en `auditoria`). Empezar por el cierre, que es el que tiene el requisito
+   escrito; las métricas son pantalla.
+2. **Hito 7, purga de datos.** El worker del correo ya está, así que de este hito
+   solo queda la purga por días de retención, que usa la columna
+   `promociones.retencion_dias`.
+3. **La ruleta de D19, si se quiere.** Decorativa, sin premios en los sectores.
+
+**Antes de escribir código nuevo, dos avisos.**
+
+- La sección «El flujo de la azafata» del `README.md` y la entrada del hito 5 en
+  el registro de hitos de este documento explican tres fallos que ya ocurrieron y
+  por qué las fronteras entre módulos se prueban ahora de punta a punta. El
+  patrón se repite: un dato que viaja entre dos módulos se rompe en el paso, no en
+  los extremos.
+- Las secciones «Reglas que no hay que romper» y «Trampas conocidas» de este
+  documento son las que más tiempo ahorran. La primera la hace cumplir el
+  verificador; la segunda no, y por eso está aquí.
+
+**Lo único que está decisionado pero sin hacer**, y que conviene decidir antes de
+programar: la suposición de D4 sobre la cola de premios pendientes es del
+implementador, no del promotor, y sigue sin confirmar (sección «Riesgos y
+limitaciones abiertas»). El cierre del hito 6 la toca, así que la pregunta
+conviene hacerla antes.
 
 ## 4. Decisiones que condicionan el trabajo
 
@@ -316,6 +365,24 @@ Cosas que ya han costado tiempo y que conviene no volver a cruzar.
 - **Para comprobar que una ruta de código no escribe nada**, se activa el log
   general de consultas de MariaDB y se busca `CREATE`, `INSERT`, `UPDATE`,
   `DELETE` o `DROP`. Es como se verificó que `--diagnostico` es de solo lectura.
+- **`Tramos` trabaja con precisión de minuto y rechaza los segundos que no sean
+  cero**, porque el esquema guarda la hora como `TIME` y el calendario reparte por
+  minutos. Pasarle un instante con segundos (`H:i:s`) en vez de `H:i` hace que
+  **  no haya tramo vigente 1 segundo de cada 60**. Pasó en
+  `ControladorParticipacion::tramoVigente()` y el síntoma eran participaciones que
+  morían con «sin tramo activo» sin error ni rastro. Cualquier sitio que corte
+  una hora de un instante debe cortar a `H:i`, no a `H:i:s`.
+- **Un dato que pinta una vista y no es un campo configurado no pasa por
+  `recoger()`.** `recoger()` solo recorre los campos visibles de la campaña, así
+  que la casilla de consentimiento, que la pinta el propio formulario, se
+  perdía por el camino y las reglas no la veían nunca. La campaña con «exigir
+  consentimiento» rechazaba a todo el mundo, marcada la casilla o sin ella, y el
+  motivo del rechazo era el correcto, de modo que no señalaba el fallo. Si se
+  añade un dato nuevo a un formulario, hay que asegurarte de que entra en `$datos`.
+- **`codigo_reclamacion` está en `unidades_premio`, no en `participaciones`.** El
+  código es de la unidad adjudicada, que es la que hay que recoger en el
+  mostrador. Las pruebas que lo busquen en la participación reciben un error de
+  columna inexistente.
 
 ## 9. Entorno
 
@@ -350,6 +417,17 @@ Según la duda, el orden es:
 
 Un commit por hito. Cada entrada dice qué se ha cerrado y qué se ha decidido,
 para que no haga falta releer el código.
+
+| Hito | Commit | Estado |
+| --- | --- | --- |
+| 0. Especificación | `fcf6770` | Cerrado |
+| 1. Base y acceso | `8c0baf5` | Cerrado |
+| 2. Motor de adjudicación | `f8844fe` | Cerrado |
+| 3. Panel de promociones | `9de72c6` | Cerrado |
+| 4. Participación y resultados | `0505a60`, cerrado en `550eaa8` | Cerrado |
+| 5. Correo | `550eaa8` | Cerrado |
+| 6. Panel de seguimiento | — | Pendiente |
+| 7. Purga de datos | — | Pendiente, la parte del worker está hecha |
 
 ### Hito 0 — Especificación (`fcf6770`)
 
@@ -432,7 +510,7 @@ sobre una sola unidad, y comprueba que uno gana, el otro no, y que en la tabla
 queda exactamente una unidad entregada. También se comprobó a mano que el proceso
 hijo **se niega a arrancar** si se le pasa el nombre de la base de la campaña.
 
-### Hito 3 — Panel de promociones
+### Hito 3 — Panel de promociones (`9de72c6`)
 
 Once pantallas de administración y el servicio que las valida. Todo el detalle
 está en la sección 5 bis; aquí solo lo que no está allí.
@@ -458,7 +536,7 @@ sin un solo problema. Y un guion de humo que pinta las once pantallas midiendo
 los bytes que escribe, porque una vista que revienta en el navegador no la detecta
 ninguna prueba de las anteriores.
 
-### Hito 4 — Participación y resultados
+### Hito 4 — Participación y resultados (`0505a60`, cerrado en `550eaa8`)
 
 **Qué hay que construir.**
 
@@ -541,7 +619,7 @@ tramo se pierda al cambiar de turno (ver `app\Models\UnidadPremio`, apartado
 `ConfiguracionPromocion::moverPremiosPendientes()` está previsto para futuras
 expansiones que puedan reorganizar las unidades según el turno actual.
 
-### Hito 5 — Correo
+### Hito 5 — Correo (`550eaa8`)
 
 **Qué hay que construir.** Los dos transportes de la decisión D1, la cola de
 mensajes y el worker que la vacía.

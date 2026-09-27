@@ -162,14 +162,18 @@ class Autorizacion
     /**
      * Exige un rol determinado, y corta la peticion si no se cumple.
      *
-     * @param string $rol Rol necesario para continuar.
+     * @param string|array<int, string> $rol Rol necesario para continuar, o
+     *                                      lista de roles que valen. Se usa
+     *                                      la lista en las pocas pantallas a las
+     *                                      que pueden entrar los dos, como la
+     *                                      participacion del apartado 5.
      *
      * @return void
      *
      * @throws \App\Core\Redirigir     Si no hay sesion iniciada.
      * @throws \App\Core\NoEncontrado  Si hay sesion, pero el rol no coincide.
      */
-    public static function exigir(string $rol): void
+    public static function exigir(string|array $rol): void
     {
         $usuario = self::usuario();
 
@@ -179,7 +183,7 @@ class Autorizacion
         // lo que espera de cualquier sitio. Un 404 aqui solo confunde, porque la
         // pagina si existe, y existe precisamente para el.
         if ($usuario === null) {
-            self::registrarIntentoDenegado($rol);
+            self::registrarIntentoDenegado(is_array($rol) ? implode('|', $rol) : $rol);
 
             // 303 y no 302: obliga al navegador a repetir con GET aunque venga
             // de un POST, que es justo lo que se quiere al ir a la pantalla de
@@ -194,8 +198,8 @@ class Autorizacion
         // permiso», que le confirmaria que hay una zona restringida y la
         // incitaria a seguir probando rutas. Se responde como si la pagina no
         // existiera y el intento queda anotado.
-        if ($usuario['rol'] !== $rol) {
-            self::registrarIntentoDenegado($rol);
+        if (!in_array((string) $usuario['rol'], (array) $rol, true)) {
+            self::registrarIntentoDenegado(is_array($rol) ? implode('|', $rol) : $rol);
             throw new NoEncontrado($_GET['r'] ?? '');
         }
     }

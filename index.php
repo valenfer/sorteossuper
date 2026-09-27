@@ -269,8 +269,25 @@ $router->get('admin/promociones/{id}/formulario', 'ControladorFormulario', 'form
 $router->post('admin/promociones/{id}/formulario', 'ControladorFormulario', 'guardarFormulario', $admin);
 
 // Participacion en la campana.
-$router->get('admin/promociones/{id}/participar', 'ControladorParticipacion', 'formulario', $admin);
-$router->post('admin/promociones/{id}/participar', 'ControladorParticipacion', 'registrar', $admin);
+//
+// Estas dos rutas admiten a los dos roles, y no es una comodidad del panel: el
+// apartado 5 describe la participacion como flujo de la azafata, que es quien la
+// escribe en la tablet delante de la clienta, pero el administrador tambien
+// necesita poder registrar una participacion desde el panel, por ejemplo cuando
+// se hace un sorteo interno o cuando una clienta no ha podido hacerlo en el
+// mostrador. Admitir los dos roles en la MISMA ruta evita mantener el
+// controlador, las vistas y el formulario duplicados, que es donde empiezan las
+// diferencias entre la copia y el original.
+//
+// Se declaran las dos rutas porque el rol no basta para saber de donde se viene:
+// la azafata entra por /azafata y el administrador por /admin, y cada una vuelve
+// a donde estaba. El controlador no necesita saberlo, porque el formulario se
+// envia a la ruta de la pantalla de la que se salio.
+$participan = [Autorizacion::ROL_ADMINISTRADOR, Autorizacion::ROL_AZAFATA];
+$router->get('admin/promociones/{id}/participar', 'ControladorParticipacion', 'formulario', $participan);
+$router->post('admin/promociones/{id}/participar', 'ControladorParticipacion', 'registrar', $participan);
+$router->get('azafata/promociones/{id}/participar', 'ControladorParticipacion', 'formulario', $participan);
+$router->post('azafata/promociones/{id}/participar', 'ControladorParticipacion', 'registrar', $participan);
 
 // Reglas, ajustes y apariencia.
 $router->get('admin/promociones/{id}/reglas', 'ControladorCampana', 'reglas', $admin);

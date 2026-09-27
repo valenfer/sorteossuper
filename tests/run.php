@@ -56,6 +56,7 @@ require_once __DIR__ . '/../app/inicio.php';
 require_once __DIR__ . '/_escenario.php';
 
 use App\Core\Aplicacion;
+use App\Services\Tramos;
 
 /**
  * Numero de pruebas que han pasado en el caso en curso.
@@ -1690,6 +1691,1270 @@ function caso10(): void
 }
 
 /**
+ * Caso 11: las reglas de verdad, con la implementacion que las mira.
+ *
+ * El caso 6 prueba el motor con un validador de mentira, que rechaza siempre o
+ * acepta siempre. Eso demuestra que el motor respeta el contrato, pero no que el
+ * contrato se cumpla: no prueba que una persona con el DNI repetido sea
+ * rechazada de verdad, ni que un codigo que no esta en la lista llegue a la cola.
+ * Este caso mete la implementacion real, \App\Services\ReglasCampana, y comprueba
+ * las reglas de duplicado del apartado 4.7 por separado y combinadas.
+ *
+ * La combinacion es la parte importante, y es la que obliga a pensar despues: con
+ * una sola columna clave_unicidad, «una por campana» y «una por dia» no se pueden
+ * resolver con una unica comparacion. La huella canonica cubre la regla de
+ * campana por el indice unico, y la de dia se comprueba aparte sobre el valor
+ * guardado en datos. Este caso verifica que las dos funcionan juntas.
+ *
+ * @return void
+ */
+function caso11(): void
+{
+    echo 'Caso 11: las reglas de verdad rechazan lo que deben', PHP_EOL;
+
+    borrarEscenarioDeAdjudicacion();
+
+    $escenario = crearEscenarioDeAdjudicacion(['10:00:00', '10:30:00', '11:00:00', '11:30:00']);
+    $promocion = $escenario['promocion'];
+
+    // Sin reglas, todo pasa. Es el caso de la campana que no ha configurado nada,
+    // y es el que hace que el resto de las comprobaciones signifiquen algo: si el
+    // validador real rechazara sin motivo, las de abajo no distinguirian un
+    // rechazo correcto de uno inventado.
+    $primera = (new \App\Services\Adjudicador(new \App\Services\ReglasCampana()))->registrar(
+        $promocion,
+        claveDePrueba('caso11-sin-reglas'),
+        $escenario['tramo'],
+        ['dni' => '11111111A'],
+        null,
+        null,
+        instanteDeHoy('11:00:00')
+    );
+    comprobarIgual('premio', $primera['resultado'], 'Una campana sin reglas acepta la participacion');
+
+    // ---- Una por campana, resuelta por el indice unico ---------------------
+    guardarReglas($promocion, [
+        'una_por_campana' => 1,
+        'campo_identidad' => 'dni',
+    ]);
+
+    $motor = new \App\Services\Adjudicador(new \App\Services\ReglasCampana());
+    $ambito = \App\Services\Huella::ambitoCampana($promocion);
+
+    $otra = $motor->registrar(
+        $promocion,
+        claveDePrueba('caso11-otra-persona'),
+        $escenario['tramo'],
+        ['dni' => '22222222B'],
+        \App\Services\Huella::de($ambito, '22222222B'),
+        null,
+        instanteDeHoy('11:00:00')
+    );
+    comprobarIgual('premio', $otra['resultado'], 'Con una por campana, otra persona si puede participar');
+
+    $repetida = $motor->registrar(
+        $promocion,
+        claveDePrueba('caso11-mismo-dni'),
+        $escenario['tramo'],
+        ['dni' => '22222222B'],
+        \App\Services\Huella::de($ambito, '22222222B'),
+        null,
+        instanteDeHoy('11:00:00')
+    );
+    comprobarIgual('rechazada', $repetida['resultado'], 'Una por campana rechaza el DNI repetido');
+    comprobarIgual('duplicado', $repetida['motivo_codigo'], 'El rechazo por duplicado lleva su codigo');
+
+    // El mismo DNI con espacios y en minusculas tiene que contar como el mismo.
+    // Es la normalizacion de la decision D3, y es la que evita que el indice
+    // unico se esquive con un tecleo.
+    $conEspacios = $motor->registrar(
+        $promocion,
+        claveDePrueba('caso11-espacios'),
+        $escenario['tramo'],
+        ['dni' => ' 2222 2222 b '],
+        \App\Services\Huella::de($ambito, '22222222B'),
+        null,
+        instanteDeHoy('11:00:00')
+    );
+    comprobarIgual(
+        'rechazada',
+        $conEspacios['resultado'],
+        'Un DNI repetido con espacios y minusculas sigue siendo el mismo'
+    );
+
+    // ---- Una por dia, comprobada aparte de la de campana -------------------
+    // Aqui esta la combinacion que obliga al reparto de la huella canonica: la
+    // regla de dia se cumple con su propia comprobacion sobre datos, y no con el
+    // indice unico. Se usa una campana nueva porque en la anterior el DNI 2222 ya
+    // esta bloqueado por la regla de campana, y asi no se podria distinguir un
+    // rechazo por dia de uno por campana.
+    borrarEscenarioDeAdjudicacion();
+    $escenario = crearEscenarioDeAdjudicacion(['12:00:00', '12:30:00']);
+    $promocion = $escenario['promocion'];
+
+    guardarReglas($promocion, [
+        'una_por_dia'     => 1,
+        'campo_identidad' => 'dni',
+    ]);
+
+    $motor = new \App\Services\Adjudicador(new \App\Services\ReglasCampana());
+    $ambitoDia = \App\Services\Huella::ambitoDia($promocion, date('Y-m-d'));
+
+    $hoy = $motor->registrar(
+        $promocion,
+        claveDePrueba('caso11-dia-1'),
+        $escenario['tramo'],
+        ['dni' => '33333333C'],
+        \App\Services\Huella::de($ambitoDia, '33333333C'),
+        null,
+        instanteDeHoy('12:00:00')
+    );
+    comprobarIgual('premio', $hoy['resultado'], 'Una por dia acepta la primera participacion del dia');
+
+    $repetidoHoy = $motor->registrar(
+        $promocion,
+        claveDePrueba('caso11-dia-2'),
+        $escenario['tramo'],
+        ['dni' => '33333333C'],
+        \App\Services\Huella::de($ambitoDia, '33333333C'),
+        null,
+        instanteDeHoy('12:30:00')
+    );
+    comprobarIgual('rechazada', $repetidoHoy['resultado'], 'Una por dia rechaza el segundo intento del mismo dia');
+
+    // ---- La lista de codigos, que es una regla ------------------------------
+    // Las unidades se crean antes que los intentos a proposito: una unidad solo
+    // se puede adjudicar cuando ya ha pasado su hora, y aqui lo que se prueba es
+    // la regla, no la cola. Sin esto, el segundo intento_valido se quedaria sin
+    // premio por falta de unidades y el fallo pareceria un problema de reglas.
+    borrarEscenarioDeAdjudicacion();
+    $escenario = crearEscenarioDeAdjudicacion(['12:00:00', '12:10:00', '12:20:00']);
+    $promocion = $escenario['promocion'];
+
+    guardarReglas($promocion, [
+        'exigir_codigo' => 1,
+    ]);
+
+    // Sin lista cargada, la regla solo obliga a que el codigo no venga en blanco.
+    // Es el uso legitimo de «exigir codigo» cuando el supermercado no ha
+    // precargado ningun cupon, y por eso no puede rechazarse solo por no estar
+    // en una lista que no existe.
+    $sinLista = (new \App\Services\Adjudicador(new \App\Services\ReglasCampana()))->registrar(
+        $promocion,
+        claveDePrueba('caso11-codigo-sin-lista'),
+        $escenario['tramo'],
+        ['codigo_participacion' => 'CUALQUIER-CODIGO'],
+        null,
+        null,
+        instanteDeHoy('12:30:00')
+    );
+    comprobarIgual(
+        'premio',
+        $sinLista['resultado'],
+        'Un codigo cualquiera pasa cuando la campana no ha cargado ninguna lista'
+    );
+
+    (new \App\Models\CodigoValido())->anadir(
+        $promocion,
+        \App\Models\CodigoValido::TIPO_CODIGO,
+        ['CODE-1']
+    );
+
+    $motor = new \App\Services\Adjudicador(new \App\Services\ReglasCampana());
+
+    $sinCodigo = $motor->registrar(
+        $promocion,
+        claveDePrueba('caso11-sin-codigo'),
+        $escenario['tramo'],
+        ['nombre' => 'Ana'],
+        null,
+        null,
+        instanteDeHoy('12:30:00')
+    );
+    comprobarIgual('rechazada', $sinCodigo['resultado'], 'Si la campana exige codigo, sin codigo se rechaza');
+    comprobarIgual('codigo_invalido', $sinCodigo['motivo_codigo'], 'El rechazo por codigo lleva su codigo');
+
+    $codigoFalso = $motor->registrar(
+        $promocion,
+        claveDePrueba('caso11-codigo-falso'),
+        $escenario['tramo'],
+        ['codigo_participacion' => 'CODE-999'],
+        null,
+        null,
+        instanteDeHoy('12:30:00')
+    );
+    comprobarIgual(
+        'rechazada',
+        $codigoFalso['resultado'],
+        'Con lista cargada, un codigo que no esta en ella se rechaza'
+    );
+
+    $codigoBueno = $motor->registrar(
+        $promocion,
+        claveDePrueba('caso11-codigo-bueno'),
+        $escenario['tramo'],
+        ['codigo_participacion' => 'code 1'],
+        null,
+        null,
+        instanteDeHoy('12:30:00')
+    );
+    comprobarIgual(
+        'premio',
+        $codigoBueno['resultado'],
+        'Un codigo de la lista pasa, y con espacios porque la lista se normaliza igual'
+    );
+
+    // ---- La lista de tickets, que es otra regla distinta --------------------
+    borrarEscenarioDeAdjudicacion();
+    $escenario = crearEscenarioDeAdjudicacion(['13:00:00', '13:10:00', '13:20:00']);
+    $promocion = $escenario['promocion'];
+
+    guardarReglas($promocion, [
+        'verificar_ticket' => 1,
+    ]);
+
+    (new \App\Models\CodigoValido())->anadir(
+        $promocion,
+        \App\Models\CodigoValido::TIPO_TICKET,
+        ['TICKET-1']
+    );
+
+    $motor = new \App\Services\Adjudicador(new \App\Services\ReglasCampana());
+
+    $ticketFalso = $motor->registrar(
+        $promocion,
+        claveDePrueba('caso11-ticket-falso'),
+        $escenario['tramo'],
+        ['num_ticket' => 'TICKET-999'],
+        null,
+        null,
+        instanteDeHoy('13:30:00')
+    );
+    comprobarIgual('rechazada', $ticketFalso['resultado'], 'Un ticket que no esta en la lista se rechaza');
+    comprobarIgual(
+        'ticket_no_verificado',
+        $ticketFalso['motivo_codigo'],
+        'El rechazo por ticket lleva su propio codigo, distinto del de codigo'
+    );
+
+    $ticketBueno = $motor->registrar(
+        $promocion,
+        claveDePrueba('caso11-ticket-bueno'),
+        $escenario['tramo'],
+        ['num_ticket' => 'ticket 1'],
+        null,
+        null,
+        instanteDeHoy('13:30:00')
+    );
+    comprobarIgual(
+        'premio',
+        $ticketBueno['resultado'],
+        'Un ticket de la lista pasa, y con espacios porque la lista se normaliza igual'
+    );
+
+    // ---- El texto del rechazo sale de la campana, no del codigo -------------
+    guardarReglas($promocion, [
+        'verificar_ticket'      => 1,
+        'texto_rechazo_codigo'  => 'Este cupon no es de esta promocion.',
+    ]);
+
+    $propio = (new \App\Services\Adjudicador(new \App\Services\ReglasCampana()))->registrar(
+        $promocion,
+        claveDePrueba('caso11-texto'),
+        $escenario['tramo'],
+        ['num_ticket' => 'TICKET-404'],
+        null,
+        null,
+        instanteDeHoy('13:30:00')
+    );
+    comprobarIgual(
+        'Este cupon no es de esta promocion.',
+        $propio['motivo_texto'],
+        'El texto que ve la clienta es el que ha escrito la campana'
+    );
+
+
+    // ---- El ambito de la huella, y por que el motor no lo decide solo --------
+    // Aqui importa una cosa que no se ve en el resto del caso: la huella NO la
+    // calcula el motor. La calcula la pantalla de participacion y se la pasa como
+    // dato, y el motor se limita a guardarla y a compararla. Por eso estas
+    // comprobaciones la calculan igual que lo hace la pantalla, con el mismo
+    // servicio, en vez de pasar null. Si se pasara null, estas reglas no se
+    // estarian probando: estarian probando solo la mitad de la comprobacion que
+    // hace la base de datos, y la otra mitad, la que elige el ambito, se
+    // quedaria sin mirar.
+    $registrar = static function (string $clave, array $datos, string $momento) use ($promocion, $escenario): array {
+        $reglas = (new \App\Models\ReglaParticipacion())->leer($promocion);
+        $huella = (new \App\Services\IdentidadCampana())
+            ->huellaCanonica($promocion, $reglas, $datos, $momento);
+
+        return (new \App\Services\Adjudicador(new \App\Services\ReglasCampana()))->registrar(
+            $promocion,
+            $clave,
+            $escenario['tramo'],
+            $datos,
+            $huella,
+            null,
+            $momento
+        );
+    };
+
+    // Lo que se comprueba aqui es si la participacion se ACEPTA o se RECHAZA, no
+    // si lleva premio. A estas alturas del caso la cola de premios ya esta
+    // vacia, y una participacion aceptada sin premio es una participacion
+    // aceptada igual. Comprobar el premio aqui haria depender estas reglas de
+    // cuantas unidades se han gastado antes, y la prueba pasaria o fallaria
+    // segun el orden en que se ejecuten los casos.
+    $aceptada = static function (array $resultado, string $porque): void {
+        comprobar(
+            $resultado['resultado'] !== 'rechazada',
+            $porque,
+            'ha salido ' . (string) $resultado['resultado'] . ' por '
+                . (string) ($resultado['motivo_codigo'] ?? 'motivo desconocido')
+        );
+    };
+
+    // ---- Con una por dia, al dia siguiente se vuelve a poder participar ------
+    // Este es el caso que mas daño hacia antes. Si la huella guardada llevara el
+    // ambito de campana en lugar del de dia, el indice unico veria la misma
+    // huella al dia siguiente y rechazaria a todo el mundo para siempre, y el
+    // rechazo apareceria un dia tarde, cuando ya nadie relaciona el segundo dia
+    // con el primer rechazo. Nada habria dado error en ningun momento.
+    guardarReglas($promocion, ['una_por_dia' => 1]);
+
+    $primera = $registrar(
+        claveDePrueba('caso11-dia-uno'),
+        ['dni' => '33333333C', 'nombre' => 'Marta'],
+        instanteDeHoy('13:30:00')
+    );
+    $aceptada($primera, 'El primer dia la participacion se acepta');
+
+    $repetida = $registrar(
+        claveDePrueba('caso11-dia-uno-otra-vez'),
+        ['dni' => '33333333C', 'nombre' => 'Marta otra vez'],
+        instanteDeHoy('13:31:00')
+    );
+    comprobarIgual(
+        'rechazada',
+        $repetida['resultado'],
+        'El mismo dia, la segunda vez, se rechaza'
+    );
+
+    $manana = (new DateTimeImmutable(instanteDeHoy('13:30:00')))
+        ->modify('+1 day')
+        ->format('Y-m-d H:i:s');
+
+    $alDiaSiguiente = $registrar(
+        claveDePrueba('caso11-dia-dos'),
+        ['dni' => '33333333C', 'nombre' => 'Marta al dia siguiente'],
+        $manana
+    );
+    $aceptada($alDiaSiguiente, 'Con una por dia, al dia siguiente vuelve a poder participar');
+
+    // Y las dos huellas tienen que ser distintas. Sin esta comprobacion, lo
+    // anterior podria estar pasando por un motivo equivocado: si la huella del
+    // dia siguiente no se guardara en absoluto, el indice no chocaria con nada y
+    // la participacion pasaria por el motivo equivocado, que es el que no
+    // cumple la regla de una por dia para el mismo dia.
+    $huellas = \App\Core\Aplicacion::db()->todos(
+        'SELECT clave_idempotencia, clave_unicidad FROM participaciones
+          WHERE promocion_id = ? AND clave_idempotencia IN (?, ?)',
+        [$promocion, claveDePrueba('caso11-dia-uno'), claveDePrueba('caso11-dia-dos')]
+    );
+    $porDia = [];
+    foreach ($huellas as $fila) {
+        $porDia[(string) $fila['clave_idempotencia']] = (string) $fila['clave_unicidad'];
+    }
+
+    comprobarIgual(2, count($porDia), 'Las dos participaciones de Marta se han guardado');
+    comprobar(
+        $porDia[claveDePrueba('caso11-dia-uno')] !== ''
+            && $porDia[claveDePrueba('caso11-dia-uno')]
+                !== $porDia[claveDePrueba('caso11-dia-dos')],
+        'La huella de un dia y la de al siguiente no coinciden'
+    );
+
+    // ---- Una por ticket: la huella es del ticket, no de la persona ---------
+    guardarReglas($promocion, ['una_por_ticket' => 1]);
+
+    $aceptada(
+        $registrar(
+            claveDePrueba('caso11-ticket-nuevo'),
+            ['dni' => '44444444D', 'num_ticket' => 'TICKET-9'],
+            instanteDeHoy('13:30:00')
+        ),
+        'Un ticket nuevo pasa'
+    );
+
+    $aceptada(
+        $registrar(
+            claveDePrueba('caso11-otro-ticket'),
+            ['dni' => '44444444D', 'num_ticket' => 'TICKET-10'],
+            instanteDeHoy('13:30:00')
+        ),
+        'Con una por ticket, la misma persona con otro ticket si puede participar'
+    );
+
+    comprobarIgual(
+        'rechazada',
+        $registrar(
+            claveDePrueba('caso11-ticket-repetido'),
+            ['dni' => '55555555E', 'num_ticket' => 'ticket-9'],
+            instanteDeHoy('13:30:00')
+        )['resultado'],
+        'Un ticket ya usado se rechaza, aunque lo escriba otra persona y con otros guiones'
+    );
+
+    // ---- Una por DNI se comprueba sobre el DNI, no sobre el campo elegido --
+    // Aqui el campo de identidad de la campana es el correo, a proposito. Si la
+    // regla compartiera la huella con el resto, la huella seria del correo, y dos
+    // personas con el mismo DNI y distinto correo no chocarian nunca. La regla
+    // no se estaria cumpliendo y nada pareceria roto.
+    guardarReglas($promocion, ['una_por_dni' => 1, 'campo_identidad' => 'email']);
+
+    $aceptada(
+        $registrar(
+            claveDePrueba('caso11-dni-uno'),
+            ['dni' => '66666666F', 'email' => 'uno@example.com'],
+            instanteDeHoy('13:30:00')
+        ),
+        'El primer DNI pasa'
+    );
+
+    comprobarIgual(
+        'rechazada',
+        $registrar(
+            claveDePrueba('caso11-dni-otro-correo'),
+            ['dni' => '66666666F', 'email' => 'otro@example.com'],
+            instanteDeHoy('13:30:00')
+        )['resultado'],
+        'El mismo DNI con otro correo se rechaza, porque la regla es por DNI'
+    );
+
+    // ---- Sin reglas de duplicado no se guarda huella -------------------------
+    // Guardando la huella de la cadena vacia, que es siempre la misma, el indice
+    // unico rechazaria a la segunda participacion de cualquiera. Es el fallo que
+    // hace que una campana sin reglas parezca tener una regla.
+    guardarReglas($promocion, []);
+
+    $libre = $registrar(
+        claveDePrueba('caso11-sin-reglas'),
+        ['dni' => '77777777G'],
+        instanteDeHoy('13:30:00')
+    );
+    $aceptada($libre, 'Sin reglas, la participacion se acepta');
+
+    comprobarIgual(
+        '',
+        (string) \App\Core\Aplicacion::db()->valor(
+            'SELECT clave_unicidad FROM participaciones WHERE promocion_id = ? AND clave_idempotencia = ?',
+            [$promocion, claveDePrueba('caso11-sin-reglas')]
+        ) ?? '',
+        'Una campana sin reglas de duplicado no guarda ninguna huella'
+    );
+
+    // ---- Una por campana manda sobre las demas ------------------------------
+    // Con las dos reglas puestas, la mas restrictiva vigila la huella y la otra se
+    // comprueba encima. Al dia siguiente sigue habiendo rechazo, y el motivo es
+    // el de una por campana, que es el que no va a cambiar con el paso del
+    // tiempo. Si mandara la de dia, esta comprobacion no tendria sentido.
+    guardarReglas($promocion, ['una_por_campana' => 1, 'una_por_dia' => 1]);
+
+    $aceptada(
+        $registrar(
+            claveDePrueba('caso11-combinada'),
+            ['dni' => '88888888H'],
+            instanteDeHoy('13:30:00')
+        ),
+        'Con una por campana y una por dia, la primera pasa'
+    );
+
+    comprobarIgual(
+        'rechazada',
+        $registrar(
+            claveDePrueba('caso11-combinada-otro-dia'),
+            ['dni' => '88888888H'],
+            $manana
+        )['resultado'],
+        'Con una por campana y una por dia, al dia siguiente tambien se rechaza'
+    );
+
+    borrarEscenarioDeAdjudicacion();
+}
+
+/**
+ * Doble de transporte de correo que falla a proposito, para el caso 12.
+ *
+ * Existe por el caso de aceptacion 9, que pide simular un fallo de envio. No se
+ * puede provocar con un buzon de verdad sin romper algo: o se manda el correo, o
+ * hay que esperar a que el servidor caiga, y una prueba que depende de cuando
+ * se rompe el servidor no es una prueba, es una apuesta. Con este doble, el
+ * fallo ocurre porque la prueba lo dice, y siempre en el momento exacto.
+ *
+ * Tambien guarda los mensajes que se le han pasado, para poder comprobar que el
+ * asunto y el cuerpo que salen son los que escribio la campana. Con el
+ * transporte de verdad no habria forma de verlo sin mandarselo a alguien.
+ */
+final class MailerQueFalla implements \App\Services\Mailer
+{
+    /** @var array<int, array<string, string>> Mensajes que se han intentado enviar. */
+    public array $vistos = [];
+
+    /** @var string Motivo que se devuelve como error. */
+    private string $motivo;
+
+    /**
+     * @param string $motivo Texto que se dira que ha fallado.
+     */
+    public function __construct(string $motivo = 'el servidor de correo no contesta')
+    {
+        $this->motivo = $motivo;
+    }
+
+    /**
+     * Anota el mensaje y falla.
+     *
+     * @param string                $destinatario Direccion de correo.
+     * @param string                $asunto       Asunto ya sustituido.
+     * @param string                $cuerpo       Cuerpo ya sustituido.
+     * @param array<string, string> $cabeceras    Cabeceras adicionales.
+     *
+     * @return bool Siempre false.
+     */
+    public function enviar(
+        string $destinatario,
+        string $asunto,
+        string $cuerpo,
+        array $cabeceras = []
+    ): bool {
+        $this->vistos[] = [
+            'destinatario' => $destinatario,
+            'asunto' => $asunto,
+            'cuerpo' => $cuerpo,
+        ];
+
+        return false;
+    }
+
+    /**
+     * @return string Siempre «log», para no cambiar el transporte guardado.
+     */
+    public function nombre(): string
+    {
+        return 'log';
+    }
+
+    /**
+     * @return string Motivo del fallo.
+     */
+    public function ultimoError(): string
+    {
+        return $this->motivo;
+    }
+}
+
+/**
+ * El hilo 5: la cola de correo se vacia, se reintenta y no manda dos veces.
+ *
+ * @return void
+ */
+function caso12(): void
+{
+    echo 'Caso 12: el processor de correo vacia la cola sin mandar dos veces', PHP_EOL;
+
+    borrarEscenarioDeAdjudicacion();
+
+    $escenario = crearEscenarioDeAdjudicacion(
+        ['10:00:00', '10:30:00', '11:00:00', '14:00:00'],
+        ['correo' => true]
+    );
+    $promocion = (int) $escenario['promocion'];
+
+    $correos = new \App\Models\Correo();
+    $motor = new \App\Services\Adjudicador(new \App\Services\ReglasCampana());
+
+    // ---- Una participacion con premio encola, y no envia --------------------
+    // D1: el mensaje se encola dentro de la transaccion y se envia despues. La
+    // comprobacion de que al adjudicar no se ha enviado nada es lo que separa
+    // «encolar» de «mandar», y es la que evita que la azafata espere a que el
+    // correo salga antes de ver el resultado.
+    $ganadora = $motor->registrar(
+        $promocion,
+        claveDePrueba('caso12-ganadora'),
+        $escenario['tramo'],
+        ['nombre' => 'Ana', 'email' => 'ana@example.com', 'dni' => '11111111A'],
+        null,
+        null,
+        instanteDeHoy('10:00:00')
+    );
+    comprobarIgual('premio', $ganadora['resultado'], 'La primera participacion se lleva el premio');
+
+    $estados = $correos->contarPorEstado($promocion);
+    comprobarIgual(1, $estados['pendiente'] ?? 0, 'Adjudicar encola el mensaje y no lo envia');
+    comprobar(
+        !isset($estados['enviado']),
+        'En este momento no hay ningun mensaje marcado como enviado'
+    );
+
+    // ---- La primera pasada envia y marca ------------------------------------
+    $recuento = (new \App\Services\ProcesadorCorreo())->procesar();
+
+    comprobarIgual(1, $recuento['enviados'], 'La primera pasada envia el mensaje pendiente');
+    comprobarIgual(0, $recuento['fallidos'], 'La primera pasada no tiene fallos');
+    comprobarIgual(0, $recuento['omitidos'], 'La primera pasada no omite nada');
+
+    $estados = $correos->contarPorEstado($promocion);
+    comprobarIgual(1, $estados['enviado'] ?? 0, 'El mensaje queda como enviado');
+
+    $fila = \App\Core\Aplicacion::db()->uno(
+        'SELECT estado, transporte, enviado_en, intentos, ultimo_error
+           FROM correos WHERE promocion_id = ? ORDER BY id DESC LIMIT 1',
+        [$promocion]
+    );
+    comprobarIgual('log', (string) $fila['transporte'], 'Se recuerda por que transporte salio');
+    comprobar(
+        $fila['enviado_en'] !== null,
+        'Un mensaje enviado lleva la hora a la que salio'
+    );
+    comprobarIgual(1, (int) $fila['intentos'], 'Un envio necesita un solo intento');
+    comprobar(
+        $fila['ultimo_error'] === null,
+        'Un mensaje enviado no guarda error ninguno'
+    );
+
+    // ---- La segunda pasada no vuelve a mandar -------------------------------
+    // Esta es la comprobacion que mas importa del caso. Adjudicar no es lo mismo
+    // que enviar, y si el processor no aparta el mensaje al mandarlo, la segunda
+    // vez que pase se mandaria otra vez y la clienta recibiria dos correos de su
+    // mismo premio.
+    $otra = (new \App\Services\ProcesadorCorreo())->procesar();
+    comprobarIgual(0, $otra['vistos'], 'La segunda pasada no ve nada pendiente');
+    comprobarIgual(0, $otra['enviados'], 'La segunda pasada no manda nada');
+    comprobarIgual(
+        1,
+        $correos->contarPorEstado($promocion)['enviado'] ?? 0,
+        'Sigue habiendo un unico mensaje enviado, no dos'
+    );
+
+    // ---- Una participacion sin premio tambien encola, si la campana manda --
+    // A las 09:00 todavia no hay ninguna unidad programada, que es el caso 3: se
+    // registra la participacion, no se toca la cola, y aun asi se encola el
+    // correo de «gracias por participar».
+    $perdedora = $motor->registrar(
+        $promocion,
+        claveDePrueba('caso12-perdedora'),
+        $escenario['tramo'],
+        ['nombre' => 'Luis', 'email' => 'luis@example.com', 'dni' => '22222222B'],
+        null,
+        null,
+        instanteDeHoy('09:00:00')
+    );
+    comprobarIgual('sin_premio', $perdedora['resultado'], 'La segunda participacion no lleva premio');
+    comprobarIgual(
+        1,
+        $correos->contarPorEstado($promocion)['pendiente'] ?? 0,
+        'La participacion sin premio tambien encola su correo'
+    );
+
+    // ---- Un fallo de envio deja el mensaje en error, con su motivo ---------
+    // Caso de aceptacion 9. Y sobre todo: la adjudicacion NO se toca. Un correo
+    // que no sale no puede convertir un premio entregado en una participacion sin
+    // premio, ni devolver la unidad a la cola.
+    $fallido = new MailerQueFalla('550 la direccion no existe');
+    $recuento = (new \App\Services\ProcesadorCorreo(null, $fallido))->procesar();
+
+    comprobarIgual(1, $recuento['fallidos'], 'El mensaje que falla se cuenta como fallido');
+    comprobarIgual(0, $recuento['enviados'], 'No se cuenta como enviado el que ha fallado');
+
+    $fila = \App\Core\Aplicacion::db()->uno(
+        'SELECT estado, ultimo_error, bloqueado_hasta, intentos
+           FROM correos WHERE promocion_id = ? ORDER BY id DESC LIMIT 1',
+        [$promocion]
+    );
+    comprobarIgual('error', (string) $fila['estado'], 'El mensaje que falla queda en estado de error');
+    comprobar(
+        str_contains((string) $fila['ultimo_error'], '550'),
+        'Se guarda el motivo real del fallo, no un texto generico',
+        'ultimo_error vale: ' . (string) $fila['ultimo_error']
+    );
+    comprobar(
+        $fila['bloqueado_hasta'] !== null,
+        'Un mensaje fallido se bloquea un tiempo para no reintentarse en bucle'
+    );
+
+    // La fila de la participacion es la que dice si la adjudicacion se ha
+    // tocado. Se lee de la tabla y no del valor que devolvio el motor, porque
+    // aquel era de antes del fallo de correo y no probaria nada.
+    $guardada = \App\Core\Aplicacion::db()->uno(
+        'SELECT resultado FROM participaciones
+          WHERE promocion_id = ? AND clave_idempotencia = ?',
+        [$promocion, claveDePrueba('caso12-perdedora')]
+    );
+    comprobarIgual(
+        'sin_premio',
+        (string) $guardada['resultado'],
+        'La adjudicacion sigue siendo valida despues de un fallo de correo'
+    );
+
+    // Y la cola de premios sigue como estaba: sigue habiendo exactamente una
+    // unidad entregada, la de Ana. Un fallo de correo no puede devolverla ni
+    // entregar otra, porque el correo va por detras de la adjudicacion.
+    comprobarIgual(
+        1,
+        (int) \App\Core\Aplicacion::db()->valor(
+            "SELECT COUNT(*) FROM unidades_premio
+              WHERE promocion_id = ? AND estado = 'entregada'",
+            [$promocion]
+        ),
+        'El fallo de correo no devuelve ni entrega ninguna unidad'
+    );
+
+    comprobarIgual(
+        0,
+        (new \App\Services\ProcesadorCorreo())->procesar()['vistos'],
+        'Un mensaje bloqueado no se vuelve a intentar en la siguiente pasada'
+    );
+
+    // ---- El limite se respeta ----------------------------------------------
+    // Sin esto, una campana con dos mil mensajes encolados vaciaria la cola
+    // entera en una pasada, sin pausa para nadie, y en la pantalla de la azafata
+    // no habria diferencia porque quien lo llama es un proceso aparte.
+    $db = \App\Core\Aplicacion::db();
+    $db->ejecutar(
+        "UPDATE correos SET estado = 'pendiente', bloqueado_hasta = NULL, intentos = 0
+          WHERE promocion_id = ? AND estado <> 'pendiente'",
+        [$promocion]
+    );
+    comprobarIgual(
+        1,
+        (new \App\Services\ProcesadorCorreo())->procesar(1)['vistos'],
+        'Con limite 1 solo se ve un mensaje, aunque haya dos en la cola'
+    );
+    comprobarIgual(
+        1,
+        $correos->contarPorEstado($promocion)['pendiente'] ?? 0,
+        'Despues de la pasada con limite 1 queda un pendiente para la siguiente'
+    );
+
+    // ---- Un transporte desconocido cae en el log, no se pierde el mensaje ----
+    $db->ejecutar(
+        "UPDATE correos SET transporte = 'inventado' WHERE promocion_id = ?",
+        [$promocion]
+    );
+    comprobarIgual(
+        1,
+        (new \App\Services\ProcesadorCorreo())->procesar()['enviados'],
+        'Un mensaje con transporte desconocido se envia igualmente, por el log'
+    );
+
+    // ---- El transporte SMTP habla el protocolo de verdad --------------------
+    // Todo lo anterior ha usado el transporte «log», que no falla nunca. Eso no
+    // prueba que el cliente SMTP funciona: solo que se guarda el texto. Aqui se
+    // levanta un servidor SMTP falso en otro proceso y se le manda un mensaje de
+    // verdad, que es la unica forma de saber que el EHLO, el MAIL FROM y el
+    // punto final se escriben donde toca. Un unit test sobre el texto montado
+    // pasaria con el protocolo entero mal.
+    $transcripcion = sys_get_temp_dir() . '/sorteos_smtp_'
+        . str_replace('-', '', claveDePrueba('caso12')) . '.txt';
+
+    if (is_file($transcripcion)) {
+        @unlink($transcripcion);
+    }
+
+    // El puerto 0 deja que el sistema elija uno libre. Probar uno fijo seria
+    // pedir que la prueba falle el dia que otro proceso lo tenga cogido.
+    $mandosSmtp = proc_open(
+        [PHP_BINARY, __DIR__ . '/_smtp_falso.php', $transcripcion, '0'],
+        [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $tuberiasSmtp
+    );
+
+    comprobar(
+        is_resource($mandosSmtp),
+        'Se ha podido levantar el servidor SMTP falso'
+    );
+
+    if (is_resource($mandosSmtp)) {
+        $puerto = 0;
+        $espera = microtime(true) + 10;
+
+        // Se espera a que el servidor diga por que puerto esta. Se lee del
+        // fichero y no se prueba a lo bruto, porque si se conecta antes de que
+        // el hijo haya abierto el socket el fallo es «conexion rechazada» y no se
+        // distingue de un fallo de SMTP de verdad.
+        while (microtime(true) < $espera) {
+            clearstatcache(true, $transcripcion);
+            $contenido = is_file($transcripcion)
+                ? (string) file_get_contents($transcripcion)
+                : '';
+
+            if (preg_match('/PUERTO (\d+)/', $contenido, $encontrado) === 1) {
+                $puerto = (int) $encontrado[1];
+                break;
+            }
+
+            usleep(50_000);
+        }
+
+        comprobar($puerto > 0, 'El servidor SMTP falso ha dicho su puerto');
+
+        if ($puerto > 0) {
+            $smtp = new \App\Services\MailerSmtp('sorteos@supermercado.local');
+
+            // El transporte se construye con la configuracion de la instalacion,
+            // y aqui se sustituyen los datos del servidor y el modo de seguridad
+            // por los de esta prueba. El modo se pone a cadena vacia a proposito:
+            // es el unico que no necesita TLS, y asi se comprueba tambien que el
+            // cliente NO intenta STARTTLS aunque el servidor lo anuncie.
+            $reflejo = new \ReflectionClass($smtp);
+            $fijar = static function (string $propiedad, $valor) use ($reflejo, $smtp): void {
+                $atributo = $reflejo->getProperty($propiedad);
+                $atributo->setAccessible(true);
+                $atributo->setValue($smtp, $valor);
+            };
+
+            $fijar('host', '127.0.0.1');
+            $fijar('puerto', $puerto);
+            $fijar('seguridad', '');
+            $fijar('usuario', '');
+
+            $enviado = $smtp->enviar(
+                'luis@example.com',
+                'Enhorabuena, Luis',
+                "Primera linea.\n.Una linea que empieza por punto.\nUltima linea."
+            );
+
+            comprobar($enviado, 'El cliente SMTP da el mensaje por enviado');
+
+            // proc_close() ya cierra las tuberias, asi que solo se cierran si
+            // siguen abiertas. Sin esta comprobacion, fclose() avisaria de un
+            // recurso que no es una tuberia y el caso terminaria con un fallo que
+            // no tiene nada que ver con lo que se estaba probando.
+            proc_close($mandosSmtp);
+
+            foreach ([1, 2] as $conducto) {
+                if (isset($tuberiasSmtp[$conducto]) && is_resource($tuberiasSmtp[$conducto])) {
+                    fclose($tuberiasSmtp[$conducto]);
+                }
+            }
+
+            $conversacion = is_file($transcripcion)
+                ? (string) file_get_contents($transcripcion)
+                : '';
+
+            comprobarContiene(
+                $conversacion,
+                'EHLO',
+                'El cliente se ha presentado con EHLO'
+            );
+            comprobarNoContiene(
+                $conversacion,
+                'AVISO el cliente ha usado HELO',
+                'El cliente no ha usado HELO, que no permite ver las capacidades'
+            );
+            comprobarContiene(
+                $conversacion,
+                'MAIL FROM:<sorteos@supermercado.local>',
+                'Ha salido el MAIL FROM con la direccion de la campana'
+            );
+            comprobarContiene(
+                $conversacion,
+                'RCPT TO:<luis@example.com>',
+                'Ha salido el RCPT TO con el destinatario'
+            );
+            comprobarContiene(
+                $conversacion,
+                'QUIT',
+                'El cliente se despide con QUIT en vez de soltar la conexion'
+            );
+            comprobarContiene(
+                $conversacion,
+                'Subject: Enhorabuena, Luis',
+                'Ha llegado el asunto que escribio la campana'
+            );
+            comprobarContiene(
+                $conversacion,
+                'CUERPO Primera linea.',
+                'Ha llegado el cuerpo del mensaje'
+            );
+            comprobarContiene(
+                $conversacion,
+                'CUERPO ..Una linea que empieza por punto.',
+                'La linea que empieza por punto va escapada, para no cerrar el mensaje antes de tiempo'
+            );
+            comprobarContiene(
+                $conversacion,
+                'FIN',
+                'La conversacion ha terminado sola, sin quedarse colgada'
+            );
+
+            @unlink($transcripcion);
+        }
+    }
+
+    borrarEscenarioDeAdjudicacion();
+}
+
+/**
+ * Cubre la pantalla de participacion de punta a punta, por HTTP y no por
+ * servicios.
+ *
+ * Los casos anteriores llaman al motor directamente, y eso es lo correcto para
+ * probar las reglas. Pero deja fuera una capa entera, que es la que de verdad usa
+ * la azafata: el formulario, el POST y la pantalla de resultado. Esta capa tiene
+ * tres cosas que los servicios no pueden ver:
+ *
+ *   1. Que el controlador y la vista encajen. La vista pide claves que el
+ *      controlador tiene que pasarle. Si falta una, la pantalla sale a medias o
+ *      con un aviso de variable no definida, y ningun servicio se entera porque
+ *      los servicios no saben nada de vistas.
+ *
+ *   2. Que el POST lleve lo que el motor necesita y el motor no puede inventar:
+ *      el token CSRF, el identificador de intento y, cuando la campana la pide,
+ *      la casilla de consentimiento. Las tres viajan en campos que genera el
+ *      propio formulario. Si el nombre de uno se cambia en la vista y no en el
+ *      controlador, el formulario se manda entero y no pasa nada, en silencio.
+ *      El caso 9 finding de este bloque es el consentimiento: la casilla la
+ *      pinta la vista, no es un campo configurado, y al no pasar por la misma
+ *      puerta que los demas se perdia por el camino. Toda campaign con
+ *      «exigir consentimiento» habria rechazado a todo el mundo, marcando la
+ *      casilla o sin ella.
+ *
+ *   3. Que la pantalla diga lo que tiene que decir y no lo contrario. En
+ *      particular, que el codigo de reclamacion se ensene o no segun se mande o
+ *      no el correo, porque si aparece en pantalla cuando ya va por correo se
+ *      multiplican los sitios por los que se puede leer el codigo de alguien.
+ *
+ * El control de rol NO se prueba aqui, y es a proposito. Lo aplica el
+ * enrutador, no el controlador, y en linea de comandos no hay sesion de
+ * navegador, de modo que Autorizacion no ve ningun usuario y todo lo pasaria
+ * como anonimo. Una prueba de rol aqui solo mediria que no hay sesion. El rol se
+ * comprueba en los casos de acceso del hito 1, que es donde vive.
+ *
+ * @return void
+ */
+function caso13(): void
+{
+    // Cuatro horas y ningun correo activado: con el correo apagado el codigo de
+    // reclamacion tiene que verse en pantalla, porque es la unica via que le
+    // queda a la persona de recoger el premio. Ese es el estado de partida.
+    $escenario = crearEscenarioDeAdjudicacion(['10:00', '11:00', '12:00', '13:00']);
+    $promocion = $escenario['promocion'];
+
+    (new \App\Models\CampoFormulario())->sustituirTodos($promocion, [
+        [
+            'clave' => 'dni', 'etiqueta' => 'DNI', 'tipo' => 'texto',
+            'obligatorio' => true, 'visible' => true, 'orden' => 1,
+            'valor_por_defecto' => '', 'min_largo' => 0, 'max_largo' => 255,
+        ],
+        [
+            'clave' => 'nombre', 'etiqueta' => 'Nombre', 'tipo' => 'texto',
+            'obligatorio' => true, 'visible' => true, 'orden' => 2,
+            'valor_por_defecto' => '', 'min_largo' => 0, 'max_largo' => 255,
+        ],
+        // El correo se declara aqui aunque en la primera participacion no se
+        // mande ningun correo, porque despues se enciende el envio de la campana
+        // sin volver a tocar el formulario. Una campana que encola correo y no
+        // tiene ningun campo de correo esta mal configurada, y el propio motor lo
+        // avisa en vez de encolar un mensaje sin destinatario.
+        [
+            'clave' => 'correo', 'etiqueta' => 'Correo electronico', 'tipo' => 'email',
+            'obligatorio' => true, 'visible' => true, 'orden' => 3,
+            'valor_por_defecto' => '', 'min_largo' => 0, 'max_largo' => 255,
+        ],
+    ]);
+
+    // La deduplicacion se enciende YA, antes de la primera participacion, y no
+    // luego. Encenderla despues no sirve para probarla: las participaciones
+    // anteriores se guardaron sin huella, porque sin reglas no hay nada que
+    // guardar, y entonces la repetida no tiene contra que chocar y entra. El
+    // rechazo se produciria por un motivo equivocado y la prueba diria que la
+    // regla funciona cuando en realidad no estaba mirandola.
+    guardarReglas($promocion, [
+        'exigir_consentimiento'   => 1,
+        'texto_consentimiento'    => 'He leido el aviso de privacidad de esta promocion.',
+        'una_por_campana'         => 1,
+        'texto_rechazo_duplicado' => 'Ya has participado en esta promocion.',
+    ]);
+
+    // ---- El formulario lleva lo que el POST va a necesitar -----------------
+    $formulario = htmlDeAccion('ControladorParticipacion', 'formulario', ['id' => $promocion]);
+
+    comprobarContiene(
+        $formulario,
+        'name="' . \App\Core\Csrf::CAMPO . '"',
+        'El formulario lleva el campo de token CSRF'
+    );
+    comprobarContiene(
+        $formulario,
+        'name="idempotencia"',
+        'El formulario lleva el identificador de intento, que es la garantia del doble clic'
+    );
+    comprobarContiene(
+        $formulario,
+        'name="consentimiento"',
+        'La casilla de consentimiento se pinta cuando la campana la exige'
+    );
+    comprobarContiene(
+        $formulario,
+        'He leido el aviso de privacidad de esta promocion.',
+        'El texto de consentimiento sale tal cual lo ha escrito la campana'
+    );
+    comprobarContiene(
+        $formulario,
+        'DNI',
+        'Se ve el campo que la campana ha declarado obligatorio'
+    );
+    comprobarNoContiene(
+        $formulario,
+        'Notice:',
+        'La pantalla del formulario sale sin avisos de PHP'
+    );
+
+    // El identificador de intento tiene que ser un UUID de verdad, no una cadena
+    // cualquiera: el motor lo exige con esa forma y rechazaria el POST entero si
+    // no la tuviera, con un error que no explica nada util a la azafata.
+    comprobar(
+        preg_match('/name="idempotencia" value="[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"/', $formulario) === 1,
+        'El identificador de intento que viaja en el formulario tiene forma de UUID'
+    );
+
+    // ---- Mandar el formulario y ver el resultado ----------------------------
+    limpiarPeticion();
+    enviarFormulario(
+        [
+            'idempotencia'  => claveDePrueba('caso13-ganadora'),
+            'dni'           => '12345678Z',
+            'nombre'        => 'Elena',
+            'correo'        => 'elena@example.com',
+            'consentimiento' => 'on',
+        ],
+        '/azafata/promociones/' . $promocion . '/participar'
+    );
+
+    $resultado = htmlDeAccion('ControladorParticipacion', 'registrar', ['id' => $promocion]);
+
+    comprobarNoContiene(
+        $resultado,
+        'Notice:',
+        'La pantalla de resultado sale sin avisos de PHP'
+    );
+    comprobarContiene(
+        $resultado,
+        'Enhorabuena',
+        'Una participacion valida lleva a la pantalla de premio, no a un error'
+    );
+
+    // Con el correo apagado, el codigo se ve. Y no se comprueba solo que aparezca
+    // la caja: se compara con el que se guardo, porque un codigo que se enseña
+    // pero no es el de la participacion es peor que no enseñar ninguno. El codigo
+    // vive en la unidad adjudicada y no en la participacion, porque es la unidad
+    // entregada la que hay que recoger en el mostrador.
+    $codigoGuardado = (string) \App\Core\Aplicacion::db()->valor(
+        'SELECT u.codigo_reclamacion FROM unidades_premio u
+           JOIN participaciones p ON p.id = u.participacion_id
+          WHERE p.promocion_id = ? AND p.clave_idempotencia = ?',
+        [$promocion, claveDePrueba('caso13-ganadora')]
+    );
+
+    comprobar($codigoGuardado !== '', 'La participacion ganadora tiene codigo de reclamacion');
+    comprobarContiene(
+        $resultado,
+        $codigoGuardado,
+        'En pantalla sale el codigo que de verdad se ha guardado, no otro'
+    );
+
+    // ---- Con el correo activado, el codigo desaparece de la pantalla ---------
+    // Se enciende el correo de la campana y se manda otra participacion con
+    // otra persona. El codigo ya no se enseña, porque va a llegar por correo, y
+    // la pantalla se queda en el texto de la campana.
+    \App\Core\Aplicacion::db()->ejecutar(
+        'UPDATE promociones SET correo_ganador = 1, correo_no_ganador = 1 WHERE id = ?',
+        [$promocion]
+    );
+
+    limpiarPeticion();
+    enviarFormulario(
+        [
+            'idempotencia'  => claveDePrueba('caso13-con-correo'),
+            'dni'           => '87654321X',
+            'nombre'        => 'Raul',
+            'correo'        => 'raul@example.com',
+            'consentimiento' => 'on',
+        ],
+        '/azafata/promociones/' . $promocion . '/participar'
+    );
+
+    $conCorreo = htmlDeAccion('ControladorParticipacion', 'registrar', ['id' => $promocion]);
+
+    comprobarContiene(
+        $conCorreo,
+        'Enhorabuena',
+        'La segunda participacion tambien gana'
+    );
+    comprobarNoContiene(
+        $conCorreo,
+        'resultado-codigo',
+        'Con el correo de premio activado, el codigo no se enseña en pantalla'
+    );
+
+    // Solo ha encolado la segunda. La primera se adjudico con el correo apagado, y
+    // una participacion que no manda correo no deja nada en la cola. Se cuenta
+    // exactamente una, y no dos, porque este es el momento de comprobar que el
+    // correo se decide en el momento de adjudicar y no despues: si el mensaje se
+    // encolara al abrir la pantalla de resultado, la primera tambien habria
+    // dejado uno y el «apago el codigo porque va por correo» de mas arriba seria
+    // una mentira.
+    comprobarIgual(
+        1,
+        (int) \App\Core\Aplicacion::db()->valor(
+            'SELECT COUNT(*) FROM correos WHERE promocion_id = ?',
+            [$promocion]
+        ),
+        'Solo la participacion con el correo activado ha dejado correo en la cola'
+    );
+
+    // ---- Un rechazo se explica con las palabras de la campana ---------------
+    // La deduplicacion sigue puesta, con el texto que escribio la campana, y por
+    // eso esta repetida tiene que caer. Elena ya participated con el mismo DNI.
+    limpiarPeticion();
+    enviarFormulario(
+        [
+            'idempotencia'  => claveDePrueba('caso13-rechazada'),
+            'dni'           => '12345678Z',
+            'nombre'        => 'Elena otra vez',
+            'correo'        => 'elena@example.com',
+            'consentimiento' => 'on',
+        ],
+        '/azafata/promociones/' . $promocion . '/participar'
+    );
+
+    $rechazo = htmlDeAccion('ControladorParticipacion', 'registrar', ['id' => $promocion]);
+
+    comprobarContiene(
+        $rechazo,
+        'Ya has participado en esta promocion.',
+        'El rechazo enseña el texto que ha escrito la campana, no un codigo interno'
+    );
+    comprobarNoContiene(
+        $rechazo,
+        'Notice:',
+        'Un rechazo tampoco es un error de PHP'
+    );
+    comprobarNoContiene(
+        $rechazo,
+        'resultado-codigo',
+        'Un rechazo no enseña ningun codigo de reclamacion'
+    );
+
+    // Y el rechazo no ha tocado las participaciones buenas: una participacion
+    // rechazada no puede haber deshecho un premio ya entregado.
+    comprobarIgual(
+        2,
+        (int) \App\Core\Aplicacion::db()->valor(
+            'SELECT COUNT(*) FROM participaciones WHERE promocion_id = ? AND resultado = ?',
+            [$promocion, 'premio']
+        ),
+        'Las dos ganadoras siguen ahi despues del rechazo de la siguiente'
+    );
+
+    // ---- Sin marcar la casilla de consentimiento, no hay participacion -------
+    // Esta es la comprobacion que encontre al escribir este caso: la casilla la
+    // pinta la vista y no es un campo configurado, asi que no pasaba por la
+    // puerta de recoger() y las reglas no la veian nunca. Con la casilla marcada
+    // de verdad, la participacion tambien se rechazaba.
+    guardarReglas($promocion, [
+        'exigir_consentimiento' => 1,
+        'texto_consentimiento'  => 'He leido el aviso de privacidad de esta promocion.',
+    ]);
+
+    limpiarPeticion();
+    enviarFormulario(
+        [
+            'idempotencia' => claveDePrueba('caso13-sin-consentimiento'),
+            'dni'          => '11223344Y',
+            'nombre'       => 'Sin marcar',
+            'correo'       => 'sinmarcar@example.com',
+        ],
+        '/azafata/promociones/' . $promocion . '/participar'
+    );
+
+    $sinConsentimiento = htmlDeAccion('ControladorParticipacion', 'registrar', ['id' => $promocion]);
+
+    comprobarContiene(
+        $sinConsentimiento,
+        'Es necesario aceptar el aviso de privacidad.',
+        'Sin marcar la casilla, el rechazo explica cual era el problema'
+    );
+    comprobarNoContiene(
+        $sinConsentimiento,
+        'Enhorabuena',
+        'Sin casilla de consentimiento no se gana nada'
+    );
+
+    // Y la prueba de verdad no es que se rechace, sino que la casilla LLEGA. Con
+    // las mismas reglas y el mismo DNI, marcando la casilla, esta vez entra. Si
+    // la casilla se perdiera por el camino, las dos participaciones darian el
+    // mismo resultado y esta comprobacion no distinguiria un caso del otro.
+    limpiarPeticion();
+    enviarFormulario(
+        [
+            'idempotencia'  => claveDePrueba('caso13-con-consentimiento'),
+            'dni'           => '11223344Y',
+            'nombre'        => 'Marcada',
+            'correo'        => 'marcada@example.com',
+            'consentimiento' => 'on',
+        ],
+        '/azafata/promociones/' . $promocion . '/participar'
+    );
+
+    comprobarContiene(
+        htmlDeAccion('ControladorParticipacion', 'registrar', ['id' => $promocion]),
+        'Enhorabuena',
+        'La misma persona, marcando la casilla, si participa'
+    );
+
+    // ---- Por que la pantalla compara con precision de minuto ----------------
+    // La pantalla de participacion busca el tramo vigente con el reloj de la
+    // campana, que trae segundos, y Tramos solo acepta horas cuyo segundo sea
+    // cero, porque el esquema guarda la hora con precision de minuto. Si la
+    // pantalla pasara el instante entero, habria tramo vigente 1 segundo de cada
+    // 60 y toda participacion reventaria con «sin tramo activo» el resto del
+    // tiempo. Es un fallo que sale y vuelve segun la hora a la que se pruebe,
+    // asi que aqui se comprueba con las sesenta posiciones del reloj y no con la
+    // hora del momento. El resto del caso depende de que haya tramo, asi que
+    // esta comprobacion es la que lo deja escrito en vez de confiar en la suerte.
+    $fallosMinuto = 0;
+    $conSegundos = 0;
+
+    for ($segundo = 0; $segundo < 60; $segundo++) {
+        $instante = date('Y-m-d H:i:') . str_pad((string) $segundo, 2, '0', STR_PAD_LEFT);
+
+        if (!Tramos::esHora(substr($instante, 11, 5))) {
+            $fallosMinuto++;
+        }
+
+        if ($segundo > 0 && Tramos::esHora(substr($instante, 11, 8))) {
+            $conSegundos++;
+        }
+    }
+
+    comprobar(
+        $fallosMinuto === 0,
+        'La hora con precision de minuto vale en las sesenta posiciones del reloj',
+        (string) $fallosMinuto . ' no valian'
+    );
+    comprobar(
+        $conSegundos === 0,
+        'Y ninguna hora con segundos distintos de cero valeria, que es lo que obliga a truncar',
+        (string) $conSegundos . ' valian'
+    );
+
+    limpiarPeticion();
+    borrarEscenarioDeAdjudicacion();
+}
+
+/**
  * Lista de casos disponibles, indexada por numero.
  *
  * @var array<int, callable():void>
@@ -1706,6 +2971,9 @@ const PRUEBAS = [
     8 => 'caso8',
     9 => 'caso9',
     10 => 'caso10',
+    11 => 'caso11',
+    12 => 'caso12',
+    13 => 'caso13',
 ];
 
 // -----------------------------------------------------------------------------

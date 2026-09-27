@@ -120,6 +120,23 @@ php bin\instalar.php [--crear-config] [--forzar] [--test] [--diagnostico] [--ayu
 | `--diagnostico` | Comprueba el entorno. No cambia nada, nunca. |
 | `--ayuda` | Muestra la ayuda. |
 
+### Worker del correo
+
+```
+php bin\enviar_correos.php [--limite=N]
+```
+
+Procesa la cola de `correos`: reserva cada mensaje con un `UPDATE` condicional,
+lo envía con el transporte configurado y marca el resultado. Un envío fallido no
+tira el mensaje: lo devuelve a la cola con el error anotado y un contador de
+intentos, y para de reintentarlo cuando llega al límite. Es idempotente:
+ejecutarlo dos veces seguidas no manda dos veces lo mismo.
+
+El fallo de correo **no** revierte la adjudicación. La clienta ya tiene su premio
+asignado aunque el mensaje no llegue, y por eso el aviso al usuario y el reintento
+del worker son dos cosas separadas. Con la cola vacía el comando no hace nada y
+termina sin error, así que se puede poner en el planificador sin miedo.
+
 ### Verificador de documentación
 
 ```
@@ -136,7 +153,7 @@ modo que sirve como paso de integración continua.
 ### Suite de pruebas
 
 ```
-php tests\run.php                    # los once casos
+php tests\run.php                    # los catorce casos
 php tests\run.php --caso 0           # solo uno
 php tests\run.php --caso=2 --verbose
 php tests\run.php --ayuda
@@ -155,6 +172,9 @@ php tests\run.php --ayuda
 | 8 | El panel de punta a punta: campaña con tramo, premio, cantidades y los ocho campos obligatorios; sin calendario no se puede activar, y con él sí. |
 | 9 | Las once pantallas del panel pintan su contenido y no se confunden entre sí. |
 | 10 | Lo que el panel no deja hacer: un estado a mano, un tramo solapado, un tramo que no cabe, un tramo con unidades y una fila de formulario a medias. |
+| 11 | Reglas de duplicado y su ámbito: una por campaña, por día, por ticket y por DNI, la combinación de dos reglas, el caso de no tener ninguna, y que la huella guardada sea la del ámbito que toca y no siempre la de campaña. |
+| 12 | El envío de correo: encolado en la transacción, transporte `log` y `smtp` contra un servidor SMTP falso, un fallo que no revierte la adjudicación, el bloqueo de un mensaje ya enviado, el límite de reintentos y la cola vacía. |
+| 13 | La pantalla de participación de punta a punta: el formulario y el POST con su token CSRF y su identificador de intento, el resultado, el rechazo con el texto de la campaña, la casilla de consentimiento y el código de reclamación según se mande correo o no. |
 
 La suite no necesita PHPUnit (decisión D6) y
 funciona contra la base de pruebas, nunca contra la de la campaña. Escriben un
@@ -172,6 +192,16 @@ de que la base de pruebas no se llama igual que la de la campaña, y ambos
 escriben su resultado en un fichero aparte para que no se mezclen: es el único
 sitio del proyecto donde una prueba podría tocar datos de una campaña real, y
 por eso la protección está en los dos lados y no solo en el padre.
+
+El caso 12 lanza un servidor SMTP propio en un proceso aparte, que acepta una
+conexión, registra lo que recibe y se cierra. Un doble de transporte habría sido
+más corto, pero no habría comprobado que lo que sale por el socket es SMTP de
+verdad: lo que se quiere probar aquí es el cable, no la intención.
+
+El caso 13 no comprueba el control de rol, y es a propósito. Lo aplica el
+enrutador, no el controlador, y en la consola no hay sesión de navegador, así que
+`Autorizacion` no ve a nadie y una prueba de rol ahí solo mediría que no hay
+sesión. El rol se comprueba en el caso 4.
 
 ## Configuración
 
@@ -269,8 +299,30 @@ unidades programadas sería abrirla sin nada que repartir.
 `/azafata`, el mostrador. Su sesión se cierra sola tras 30 minutos de inactividad,
 porque la tablet se queda encima del mostrador.
 
-**Lo que se añadirá.** Registrar participaciones y ver el premio adjudicado en
-el momento en que el servidor lo decide.
+Desde una campaña abierta, la ruta de participación es
+`/azafata/promociones/{id}/participar`, y el administrador llega a la misma
+pantalla por `/admin/promociones/{id}/participar`. La diferencia entre las dos
+rutas es solo el sitio al que vuelve el botón de «participar con otra persona», y
+el rol lo comprueba el enrutador.
+
+| Pantalla | Qué hace |
+| --- | --- |
+| `…/participar` | Pinta el formulario con los campos visibles de la campaña, en su orden, con su obligatoriedad, y la casilla de consentimiento si la campaña la pide. |
+| `…/participar` (POST) | Valida, adjudica en el servidor y pinta el resultado: premio, sin premio o rechazo con el motivo. |
+
+Tres detalles de este flujo que no son evidentes:
+
+- **El resultado se decide en el servidor.** La azafata no ve si ha ganado antes
+  de que el motor responda, y el navegador no participa en la decisión.
+- **La casilla de consentimiento se recoge aparte.** No es uno de los campos que
+  configura el administrador, la pinta la propia vista, así que el controlador la
+  pasa a las reglas a mano. Si se olvidara, una campaña que exige consentimiento
+  rechazaría a todo el mundo, marcada la casilla o sin ella.
+- **El código de reclamación se enseña según el correo.** Si la campaña manda el
+  correo de premio, el código no aparece en pantalla, porque ya va a llegar por
+  correo y ponerlo también ahí solo multiplica los sitios por los que se puede
+  leer el de alguien. Si no lo manda, es la única vía que le queda a la clienta
+  para recoger el premio, y se enseña.
 
 Ningún dato de una persona se ve en una pantalla que no sea la suya. La
 aplicación no lleva cuenta de «una participación por persona» comparando el
@@ -371,11 +423,29 @@ tramos con sus cantidades y la generación del calendario de premios con su
 diagnóstico previo. La ficha de la campaña resume si se puede abrir y por qué no.
 Ninguna pantalla necesita JavaScript.
 
-**Pendiente.** Las pantallas de participación y de resultado, la implementación de
-las reglas de campaña (el motor ya acepta un validador y solo falta el validador
-real), el envío de correo y los scripts de línea de comandos para procesar la cola
-de mensajes y purgar datos. Las pantallas de destino siguen siendo provisionales
-y lo indican en pantalla.
+**Terminado (hito 5).** Las pantallas de participación y de resultado, las reglas
+de campaña como validador real, y el envío de correo.
+
+- **Reglas.** `ReglasCampana` implementa una por campaña, por día, por ticket y
+  por DNI, la verificación de tickets contra lista, el consentimiento y los
+  códigos de acceso, con el texto de rechazo que haya escrito la campaña. El
+  ámbito de la huella lo elige `IdentidadCampana`, el mismo sitio que usa la
+  pantalla, para que no puedan separarse. La huella guardada lleva el ámbito de la
+  regla más restrictiva, no siempre el de campaña: con eso, «una por día» no
+  rechaza a la misma persona para siempre, solo el primer día.
+- **Correo.** `Mailer` con transporte `log` (el de por defecto, que no sale del
+  servidor) y `smtp` en PHP puro, con EHLO, STARTTLS, AUTH LOGIN y TLS
+  opportunistic. `ProcesadorCorreo` reserva cada mensaje con un `UPDATE`
+  condicional antes de mandarlo, para que dos workers a la vez no envíen el
+  mismo correo dos veces, y `bin\enviar_correos.php` lo ejecuta.
+- **El fallo de correo no revierte la adjudicación.** Un envío fallido devuelve
+  el mensaje a la cola con su error y reintenta hasta un límite. La clienta ya
+  tiene el premio adjudicado aunque el mensaje no llegue.
+
+**Pendiente.** La ruleta decorativa del mostrador (D19), el cierre de campaña que
+pasa las unidades no entregadas a `no_entregada` y la purga de datos por
+retención. La decisión D4 de mover los premios pendientes entre días está
+prevista pero sin usar todavía, como explica `ConfiguracionPromocion`.
 
 **Cómo saber si está sano.** Con el servidor arrancado:
 

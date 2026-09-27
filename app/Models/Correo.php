@@ -47,6 +47,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Core\Aplicacion;
 use App\Core\ErrorValidacion;
 use App\Core\Modelo;
 
@@ -173,11 +174,31 @@ class Correo extends Modelo
                 $this->sustituir($asunto, $valores),
                 $this->sustituir($cuerpo, $valores),
                 json_encode($valores, JSON_UNESCAPED_UNICODE),
-                'log',
+                $this->transporteConfigurado(),
                 'pendiente',
                 \App\Core\Aplicacion::ahora(),
             ]
         );
+    }
+
+    /**
+     * Transporte con el que se encolan los mensajes nuevos.
+     *
+     * Se lee de la configuracion y no se escribe 'log' a pelo, porque si el
+     * mensaje quedara con el transporte puesto a mano cambiar «correo.transporte»
+     * a 'smtp' en config.php no serviria de nada: la cola seguiria llena de
+     * mensajes marcados como 'log' y el procesador los escribiria en el log como
+     * si nada. Guardando el transporte en la fila, cada mensaje recuerda por que
+     * camino iba cuando se encolo, y cambiar de 'log' a 'smtp' se nota en los
+     * mensajes siguientes sin tocar los que ya estaban en la cola.
+     *
+     * @return string «log» o «smtp», o 'log' si la configuracion dice otra cosa.
+     */
+    private function transporteConfigurado(): string
+    {
+        $valor = (string) (Aplicacion::config()['correo']['transporte'] ?? 'log');
+
+        return $valor === 'smtp' ? 'smtp' : 'log';
     }
 
     /**
@@ -209,6 +230,135 @@ class Correo extends Modelo
         }
 
         return $recuento;
+    }
+
+    /**
+     * Saca de la cola los mensajes pendientes que se pueden intentar ya.
+     *
+     * La consulta usa el indice ix_correos_cola (estado, bloqueado_hasta,
+     * creado_en), que es exactamente el orden en que se pide: primero los
+     * pendientes, y entre ellos los mas antiguos. Ordenarlos por creado_en no es
+     * cosmetico, es lo que hace que un correo de premio salga antes que un «gracias
+     * por participar» que se encolo despues, y no al reves.
+     *
+     * Se excluyen los que tienen bloqueado_hasta en el futuro. Sin esa condicion,
+     * un mensaje cuyo envio fallo volveria a intentarse en cada pasada del
+     * procesador, y una direccion de correo que no existe —el error mas comun—
+     * haria que cada pasada tardara lo mismo en fallar otra vez, sin que nadie
+     * llegue a ver el mensaje de los que si funcionan.
+     *
+     * El paso a «enviando» NO se hace aqui. Se hace justo antes de enviar, con
+     * una actualizacion condicionada al estado, y por el motivo que explica
+     * \App\Services\ProcesadorCorreo: dos procesos que se solapan no pueden
+     * enviar el mismo mensaje dos veces.
+     *
+     * @param int $limite Maximo de mensajes que se devuelven.
+     *
+     * @return array<int, array<string, mixed>> Mensajes, del mas antiguo al mas
+     *                                       reciente.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function pendientes(int $limite = 50): array
+    {
+        return $this->db->todos(
+            'SELECT id, promocion_id, destinatario, asunto, cuerpo, transporte,
+                    intentos, creado_en
+               FROM correos
+              WHERE estado = ?
+                AND (bloqueado_hasta IS NULL OR bloqueado_hasta <= ?)
+              ORDER BY creado_en ASC
+              LIMIT ' . max(1, $limite),
+            ['pendiente', Aplicacion::ahora()]
+        );
+    }
+
+    /**
+     * Pasa un mensaje a «enviando», y solo si seguia en «pendiente».
+     *
+     * El «y solo si» es la parte importante y la razon de que devuelva un
+     * booleano en vez de dar por hecho el paso. Dos procesos pueden leer la misma
+     * fila pendiente en el mismo instante si la cola se vacia a la vez desde dos
+     * lado; sin esta condicion, los dos pasarian el estado a «enviando» y los dos
+     * enviarian el correo, con lo que la clienta recibiria el mensaje de premio
+     * dos veces. La condicion hace que el segundo reciba false y se lo deje al
+     * primero, que ya lo esta enviando.
+     *
+     * @param int $id Identificador del mensaje.
+     *
+     * @return bool True si este proceso se ha quedado con el mensaje.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function marcarEnviando(int $id): bool
+    {
+        return $this->db->ejecutar(
+            "UPDATE correos
+                SET estado = 'enviando', intentos = intentos + 1
+              WHERE id = ? AND estado = 'pendiente'",
+            [$id]
+        ) === 1;
+    }
+
+    /**
+     * Anota que un mensaje se ha enviado.
+     *
+     * @param int    $id   Identificador del mensaje.
+     * @param string $tipo Transporte por el que ha salido, para poder distinguir
+     *                     un envio real de uno que solo se ha escrito en el log.
+     *
+     * @return void
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la escritura falla.
+     */
+    public function marcarEnviado(int $id, string $tipo = 'log'): void
+    {
+        $this->db->ejecutar(
+            "UPDATE correos
+                SET estado = 'enviado',
+                    enviado_en = ?,
+                    ultimo_error = NULL,
+                    transporte = ?
+              WHERE id = ?",
+            [Aplicacion::ahora(), $tipo, $id]
+        );
+    }
+
+    /**
+     * Anota que un mensaje no se ha podido enviar y hasta cuando no se reintenta.
+     *
+     * El estado pasa a «error» y no vuelve a «pendiente» por el mismo camino, que
+     * es a proposito: un mensaje que ha fallado no se debe reenviar en bucle dentro
+     * de la misma pasada. Vuelve a la cola cuando un proceso posterior lo
+     * reinicie, y mientras tanto se puede ver que fallo y por que.
+     *
+     * El bloqueo se retrasa cada vez mas segun los intentos que lleva, para que un
+     * destino que esta caido no se reintente en cada pasada mientras se decide que
+     * hacer con el. El primer fallo espera poco, porque puede haber sido un fallo
+     * puntual; a partir del cuarto, espera un dia entero, porque a partir de ahi lo
+     * probable es que la direccion no exista.
+     *
+     * @param int    $id     Identificador del mensaje.
+     * @param string $motivo Texto del fallo, que se guarda recortado.
+     * @param int    $intentos Numero de intentos que lleva el mensaje.
+     *
+     * @return void
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la escritura falla.
+     */
+    public function marcarError(int $id, string $motivo, int $intentos = 1): void
+    {
+        $minutos = min(1440, 2 ** min(6, max(0, $intentos)) * 5);
+        $hasta = (new \DateTimeImmutable('now'))->modify('+' . $minutos . ' minutes');
+
+        $this->db->ejecutar(
+            "UPDATE correos
+                SET estado = 'error',
+                    ultimo_error = ?,
+                    bloqueado_hasta = ?
+              WHERE id = ?",
+            [mb_substr($motivo, 0, 500), $hasta->format('Y-m-d H:i:s'), $id]
+        );
     }
 
     /**

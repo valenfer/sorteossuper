@@ -57,6 +57,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Core\Modelo;
+use App\Services\Huella;
 
 /**
  * Acceso a la tabla de participaciones validas.
@@ -191,6 +192,121 @@ class Participacion extends Modelo
                 $momento,
             ]
         );
+    }
+
+    /**
+     * Indica si una clave de unicidad ya esta en uso en la campana.
+     *
+     * La comparacion no se hace con la identidad en claro sino con la huella
+     * HMAC, que es lo unico que se guarda. Por eso la unica forma de responder
+     * es haciendo la misma pregunta a la base de datos: no hay forma de
+     * recalcular la huella de una participacion ya guardada, y no hace falta,
+     * porque la huella de la identidad que llega en el intento se compara
+     * directamente con la almacenada.
+     *
+     * La consulta toca el indice unico (promocion_id, clave_unicidad), que es
+     * un indice compuesto y por tanto de lectura y no de recuento: responder si
+     * existe una fila concreta cuesta lo mismo que leer la primera. Por eso el
+     * LIMIT 1 no es una optimizacion sin importancia, sino el motivo de que la
+     * comprobacion de duplicados quepa en la misma peticion que la adjudicacion
+     * sin que se note.
+     *
+     * @param int    $promocionId   Campana en la que se busca.
+     * @param string $claveUnicidad Huella HMAC de la identidad.
+     *
+     * @return bool True si ya hay una participacion con esa huella.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function existeClaveUnicidad(int $promocionId, string $claveUnicidad): bool
+    {
+        if ($claveUnicidad === '') {
+            return false;
+        }
+
+        $existe = $this->db->valor(
+            'SELECT 1 FROM participaciones
+              WHERE promocion_id = ?
+                AND clave_unicidad = ?
+              LIMIT 1',
+            [$promocionId, $claveUnicidad]
+        );
+
+        return $existe !== null;
+    }
+
+    /**
+     * Indica si una identidad ya participar antes, en el dia indicado o no.
+     *
+     * ============================================================================
+     * POR QUE ESTA CONSULTA NO USA EL INDICE UNICO
+     * ============================================================================
+     *
+     * La columna clave_unicidad guarda una sola huella por participacion, la
+     * canonica de ambito «campana», y el indice unico
+     * (promocion_id, clave_unicidad) es el que garantiza la regla de una
+     * participacion por campana. Las demas reglas de duplicado necesitan una
+     * huella con otro ambito —«campana:7|dia:2026-03-15» o «ticket:abc123»— que
+     * no cabe en esa columna porque hay una sola. Por eso se comprueban aqui, de
+     * forma explicita, sobre el valor de identidad guardado en la columna datos.
+     *
+     * La normalizacion se hace en SQL, con LOWER y REPLACE, replicando lo que
+     * hace \App\Services\Huella::normalizar(): minusculas, sin espacios y sin los
+     * separadores que la gente pone al dictar un numero. Es una copia
+     * consciente del metodo de PHP, no una coincidencia: si los dos dejaran de
+     * coincidir, un ticket con espacios podria estar repetido y no contarse
+     * como tal. Si alguna vez cambia Huella::normalizar, hay que cambiar aqui
+     * tambien, y por eso la prueba de reglas mira justo este caso.
+     *
+     * La consulta no es indexada, y es una decision consciente. El numero de
+     * participaciones de una campana de un supermercado cabe de sobra en memoria
+     * y en disco, y esta consulta se ejecuta una vez por intento, con el bloqueo
+     * de campana ya tomado por el motor. La alternativa —una columna y un indice
+     * por cada regla— multiplica los indices para un tabla que no los necesita.
+     *
+     * @param int         $promocionId Campana en la que se busca.
+     * @param string      $campo       Clave del campo dentro del JSON de datos.
+     * @param string      $valor       Valor de identidad, sin normalizar.
+     * @param string|null $fecha       Fecha en formato «A-n-j» para acotar al dia,
+     *                                 o null para no acotar.
+     *
+     * @return bool True si esa identidad ya tiene una participacion.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function existeIdentidadEn(
+        int $promocionId,
+        string $campo,
+        string $valor,
+        ?string $fecha = null
+    ): bool {
+        if ($campo === '' || Huella::normalizar($valor) === '') {
+            return false;
+        }
+
+        // La clave del campo la escribe el administrador, y se escapa para que
+        // un campo con comillas o barra no pueda romper el JSON_PATH. Es el unico
+        // dato que llega aqui de la configuracion y no de un conjunto cerrado, y
+        // la consulta es parametrizada, pero la clave va dentro de una cadena de
+        // MySQL y por eso necesita su propio escapado.
+        $ruta = "$.\"" . str_replace(['\\', '"'], ['\\\\', '\\"'], $campo) . "\"";
+        $normalizado = "LOWER(TRIM(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
+            . "JSON_UNQUOTE(JSON_EXTRACT(datos, ?)), ' ', ''), '\t', ''), '\n', ''), '-', ''), '_', '')))";
+
+        $sql = 'SELECT 1 FROM participaciones
+                  WHERE promocion_id = ?
+                    AND ' . $normalizado . ' = ?';
+
+        $parametros = [$promocionId, $ruta, Huella::normalizar($valor)];
+
+        if ($fecha !== null && $fecha !== '') {
+            $sql .= ' AND DATE(momento) = ?';
+            $parametros[] = $fecha;
+        }
+
+        $sql .= ' LIMIT 1';
+
+        return $this->db->valor($sql, $parametros) !== null;
     }
 
     /**

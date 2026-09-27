@@ -70,7 +70,7 @@ class Router
      * Se guarda aparte y no en la definicion de la ruta para poder compararla
      * sin parsear de nuevo el patron.
      *
-     * @var array<string, string|null>
+     * @var array<string, string|array<int, string>|null>
      */
     private array $roles = [];
 
@@ -104,12 +104,12 @@ class Router
      *                             prefijo App\Controllers, por ejemplo
      *                             «AdminTramos».
      * @param string      $metodo  Nombre del metodo publico que atiende la ruta.
-     * @param string|null $rol     Rol exigido, 'administrador' o 'azafata'. Con
-     *                             null, la ruta es publica.
+     * @param string|array<int, string>|null $rol Rol exigido, uno de 'administrador' o
+     *                             'azafata', o una lista de los dos. Con null, la
      *
      * @return void
      */
-    public function get(string $patron, string $controlador, string $metodo, ?string $rol = null): void
+    public function get(string $patron, string $controlador, string $metodo, string|array|null $rol = null): void
     {
         $this->registrar('GET', $patron, $controlador, $metodo, $rol);
     }
@@ -120,11 +120,11 @@ class Router
      * @param string      $patron      Patron de la ruta.
      * @param string      $controlador Nombre de la clase controladora.
      * @param string      $metodo      Nombre del metodo publico.
-     * @param string|null $rol         Rol exigido, o null si es publica.
+     * @param string|array<int, string>|null $rol Rol exigido, o null si es publica.
      *
      * @return void
      */
-    public function post(string $patron, string $controlador, string $metodo, ?string $rol = null): void
+    public function post(string $patron, string $controlador, string $metodo, string|array|null $rol = null): void
     {
         $this->registrar('POST', $patron, $controlador, $metodo, $rol);
     }
@@ -136,11 +136,11 @@ class Router
      * @param string      $patron      Patron de la ruta.
      * @param string      $controlador Nombre de la clase controladora.
      * @param string      $metodo      Nombre del metodo del controlador.
-     * @param string|null $rol         Rol exigido, o null si es publica.
+     * @param string|array<int, string>|null $rol Rol exigido, o null si es publica.
      *
      * @return void
      */
-    private function registrar(string $metodoHttp, string $patron, string $controlador, string $metodo, ?string $rol): void
+    private function registrar(string $metodoHttp, string $patron, string $controlador, string $metodo, string|array|null $rol): void
     {
         // Se normaliza el patron quitando la barra inicial y la final, para
         // que «/admin» y «admin» sean la misma ruta y no dos.
@@ -302,11 +302,11 @@ class Router
      * @param array<string, string> $definicion Pares «controlador» y «metodo».
      * @param array<string, string> $parametros Valores de los parametros de la
      *                                        ruta.
-     * @param string|null           $rol        Rol exigido, o null si es publica.
+     * @param string|array<int, string>|null $rol Rol exigido, o null si es publica.
      *
      * @return void
      */
-    private function ejecutar(array $definicion, array $parametros, ?string $rol): void
+    private function ejecutar(array $definicion, array $parametros, string|array|null $rol): void
     {
         // El control de acceso se comprueba aqui, en el servidor, y no solo
         // ocultando enlaces en el HTML. Ocultar un enlace no protege nada: la

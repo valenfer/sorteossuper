@@ -207,10 +207,17 @@ function crearEscenarioDeAdjudicacion(array $horas, array $opciones = []): array
         ]
     );
 
+    // El tramo llega hasta las 23:59:00 y no hasta las 23:59:59 porque los
+    // segundos tienen que valer cero: Tramos::esHora() los rechaza, que es lo
+    // correcto, ya que el esquema guarda la hora con precision de minuto. Escribo
+    // el INSERT a mano y saltarme el validador ha hecho durante un tiempo que este
+    // tramo no sirviera para nada, y que al probar la participacion por HTTP
+    // saltara el «sin tramo activo» sin que se entendiera por que, porque el dato
+    // estaba bien mirado y solo era invalido para las reglas.
     $tramoId = $db->insertar(
         'INSERT INTO tramos (promocion_id, fecha, hora_inicio, hora_fin, creado_en)
          VALUES (?, CURDATE(), ?, ?, ?)',
-        [$promocionId, '00:00:00', '23:59:59', $ahora]
+        [$promocionId, '00:00:00', '23:59:00', $ahora]
     );
 
     $tipoPremioId = $db->insertar(
@@ -526,6 +533,28 @@ function htmlDeAccion(string $controlador, string $metodo, array $parametros = [
     }
 
     return (string) ob_get_clean();
+}
+
+/**
+ * Guarda las reglas de una campana dejando el resto en su valor por defecto.
+ *
+ * \App\Models\ReglaParticipacion::guardar() espera todas las casillas, porque en
+ * el panel se guardan todas juntas. Una prueba que solo quiere activar una
+ * llamada tendria que escribir las otras trece, y ese ruido hace que un fallo se
+ * confunda con un dato mal puesto. Aqui se rellena lo que falte con los valores
+ * por defecto, que es lo mismo que significa «no tocar lo demas».
+ *
+ * @param int                  $promocionId Campana cuyas reglas se guardan.
+ * @param array<string, mixed> $datos       Casillas que se quieren cambiar.
+ *
+ * @return void
+ */
+function guardarReglas(int $promocionId, array $datos): void
+{
+    (new \App\Models\ReglaParticipacion())->guardar(
+        $promocionId,
+        array_merge((new \App\Models\ReglaParticipacion())->valoresPorDefecto(), $datos)
+    );
 }
 
 /**

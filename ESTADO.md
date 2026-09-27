@@ -22,11 +22,11 @@ configura la promoción y el personal de tienda registra las participaciones.
 | 0. Especificación | Terminado | `fcf6770` | Addendum D1–D19 y las 19 decisiones de implementación. |
 | 1. Base y acceso | Terminado | `8c0baf5` | Núcleo, sesiones, rutas, vistas, acceso por roles, instalador, verificador, pruebas, README. |
 | 2. Motor de adjudicación | Terminado | `f8844fe` | Cola de premios, transacción con bloqueo, evita adjudicaciones dobles. |
-| 3. Configuración de la promoción | Pendiente | — | Panel del administrador: días, tramos, tipos de premio, cantidades, calendario. |
-| 4. Participaciones | Pendiente | — | Registro por la azafata, reglas, identidad, las tres pantallas. |
-| 5. Correo | Pendiente | — | Transporte `log` y `smtp`, cola de mensajes, reintentos. |
+| 3. Configuración de la promoción | Terminado | `9de72c6` | Panel del administrador: días, tramos, tipos de premio, cantidades, calendario. |
+| 4. Participaciones y resultados | Terminado | `0505a60` | Registro por la azafata, reglas, identidad, las dos pantallas. |
+| 5. Correo | En curso | — | Transporte `log` y `smtp`, cola de mensajes, reintentos, worker. |
 | 6. Panel de seguimiento | Pendiente | — | Métricas, filtros, auditoría, cierre de promoción. |
-| 7. Scripts de línea de comandos | Pendiente | — | Procesar la cola de correo, purgar datos. |
+| 7. Scripts de línea de comandos | Parcial | — | El worker del correo está; la purga de datos por retención no. |
 
 **El orden importa.** El hito 2 va antes que el 3 y el 4 a propósito: es el
 único punto donde un error no se ve en la pantalla y se manifiesta días
@@ -48,10 +48,11 @@ Lo que se espera ahora mismo, exactamente:
 
 | Comprobación | Resultado esperado |
 | --- | --- |
-| `verificar_docs.php` | `Todo correcto: 29 ficheros, sin problemas` |
-| `tests\run.php` | `Todo correcto: 8 casos ejecutados, 141 comprobaciones` |
+| `verificar_docs.php` | `Todo correcto: 68 ficheros, sin problemas` |
+| `tests\run.php` | `Todo correcto: 14 casos ejecutados, 294 comprobaciones` |
 | `instalar.php --diagnostico` | `Diagnostico terminado`, sin ninguna escritura |
 | `instalar.php` | Idempotente: se puede repetir sin romper nada |
+| `enviar_correos.php` | Enviados 0, fallidos 0 con la cola vacía, sin error |
 | `/login` | 200 |
 | `/admin` sin sesión | 303 a la pantalla de acceso |
 | `/admin` como administrador | 200 |
@@ -491,22 +492,93 @@ ninguna prueba de las anteriores.
   al momento; en modo real la adjudicación sigue el mismo bloqueo de promoción
   y cola de correos que el motor ya tiene.
 
-- **D4 – Premio pendiente en cola.** Los premios cuyo estado es ``pendiente``
-  permanecen en la cola global de `unidades_premio` y no se filtran por tramo,
-  tal como establece la decisión D4. Esto evita que el pool de premios de cada
-  tramo se pierda al cambiar de turno (ver `app\Models\UnidadPremio`, apartado
-  "Por qué la cola no se filtra por tramo"). El método
-  `ConfiguracionPromocion::moverPremiosPendientes()` está previsto para futuras
-  expansiones que puedan reorganizar las unidades según el turno actual.
+**Fallos que damos por resueltos.**
 
-**Fallos que daremos por resueltos.**
-
-- El aviso de “participación rechazada” ya no es silencioso: el servidor devuelve
-  un mensaje legible explicando por qué (horario, regla incumplida, etc.).
+- El aviso de “participación rechazada” no es silencioso: el servidor devuelve un
+  mensaje legible explicando por qué, con el texto que escribió la campaña y no
+  un código interno.
 - La participación quedada sin unidad (por ejemplo, después de deshacer una
   adjudicación) se muestra como “sin premio” y no como error.
 
-**Cómo se comprobará.** Los casos 8–10 de la suite oficial ya cubren el panel;
-se añadirán tres casos nuevos (participación única, doble envío idempotente,
-rechazo con mensaje) y el humo de las pantallas ampliado a participar y
-resultado. La suite oficial pasará de 202 a unas 260 comprobaciones aproximadamente.
+**Cómo se comprueba.** El caso 11 cubre las reglas de duplicado y, sobre todo, el
+ámbito de la huella guardada. El caso 13 cubre el flujo de la pantalla de punta a
+punta, con su POST y su token. Los dos juntos cubren lo que se pedía aquí más una
+cosa que no estaba en el plan: la casilla de consentimiento.
+
+**Lo que encontró el caso 13 al escribirse.** No es un detalle, así que queda
+escrito. La casilla de consentimiento la pinta `views/participacion/formulario.php`
+y **no** es uno de los campos que configura el administrador, así que no pasaba
+por `ControladorParticipacion::recoger()`, que solo recorre los campos visibles.
+Las reglas buscan `consentimiento` entre los datos y no lo encontraban nunca: una
+campaña con «exigir consentimiento» rechazaba a **todo el mundo**, marcada la
+casilla o sin ella, y el motivo era el correcto, de modo que no daba ninguna pista
+de que el fallo estuviera antes. Los dos sitios estaban bien escritos por
+separado; lo que faltaba era el dato que los une. Ahora el controlador lo pasa a
+mano y el caso 13 lo comprueba en los dos sentidos, sin casilla y con casilla, con
+el mismo DNI.
+
+**Otro fallo del mismo tipo, y peor.** `tramoVigente()` pasaba a `Tramos` el
+instante entero, con segundos. `Tramos::esHora()` rechaza los segundos que no
+sean cero, porque el esquema guarda la hora con precisión de minuto, así que
+había tramo vigente **1 segundo de cada 60**. Fuera de ese segundo, toda
+participación moría con «se ha validado una participación sin tramo activo». No
+daba error, no dejaba rastro y solo se notaba por el reloj: una campaña en la que
+el 98 % de las participaciones fallaban y el 2 % pasaban, sin explicación. Ahora se
+pasa con precisión de minuto, y el caso 13 lo comprueba con las sesenta
+posiciones del reloj en lugar de con la hora del momento, porque si no la
+comprobación solo valdría 1 de cada 60 veces.
+
+**Los dos fallos eran del mismo tipo**: una frontera entre dos módulos escrita dos
+veces, en dos sitios, y que solo se rompe cuando algo pasa por los dos. Por eso el
+caso 13 prueba la pantalla y no solo los servicios. Un servicio que se prueba
+solo no se cruza nunca con la vista, y el hueco queda sin mirar.
+
+**D4 — Premio pendiente en cola.** Los premios cuyo estado es `pendiente`
+permanecen en la cola global de `unidades_premio` y no se filtran por tramo,
+tal como establece la decisión D4. Esto evita que el pool de premios de cada
+tramo se pierda al cambiar de turno (ver `app\Models\UnidadPremio`, apartado
+"Por qué la cola no se filtra por tramo"). El método
+`ConfiguracionPromocion::moverPremiosPendientes()` está previsto para futuras
+expansiones que puedan reorganizar las unidades según el turno actual.
+
+### Hito 5 — Correo
+
+**Qué hay que construir.** Los dos transportes de la decisión D1, la cola de
+mensajes y el worker que la vacía.
+
+**Lo que hay.**
+
+- `app/Services/Mailer.php` es la interfaz. `MailerLog` (el de por defecto) no
+  sale del servidor: marca el mensaje como enviado y lo deja escrito en `correos`.
+  `MailerSmtp` habla SMTP en PHP puro: EHLO, STARTTLS cuando el servidor lo pide,
+  TLS oportunista, AUTH LOGIN, MAIL FROM, RCPT TO, DATA con el *dot-stuffing* y
+  QUIT.
+- `Correo::encolar()` usa `correo.transporte` de la configuración. Antes fijaba
+  `log` siempre, así que encender el SMTP en la configuración no cambiaba nada y
+  el correo se quedaba en la base de datos sin avisar.
+- `ProcesadorCorreo` reserva cada mensaje con un `UPDATE ... WHERE estado =
+  'pendiente'` y comprueba el número de filas afectadas antes de enviarlo. Es lo
+  mismo que impide que dos unidades se adjudiquen dos veces, aplicado a la cola:
+  dos workers a la vez no mandan el mismo correo dos veces.
+- Un fallo de envío devuelve el mensaje a la cola con el error anotado y un
+  contador de intentos, y para de reintentarlo al llegar al límite. **Nunca
+  revierte la adjudicación**: la clienta ya tiene el premio aunque el mensaje no
+  llegue, y por eso el aviso al usuario y el reintento del worker son cosas
+  separadas.
+- `bin/enviar_correos.php` es el worker. Con la cola vacía no hace nada y sale
+  bien, así que se puede dejar en el planificador.
+
+**Lo que encontró el caso 12 al escribirse.** El `MailerSmtp` no mandaba nada
+porque no enviaba `MAIL FROM`, `RCPT TO` ni `DATA`. Se escribía el sobre a mano,
+se saltaba el comando y se saltaba el final del mensaje, así que el servidor se
+quedaba esperando y la conexión se caía. Solo se vio porque el caso 12 manda
+contra un servidor SMTP falso de verdad, en otro proceso, y ese servidor responde
+a lo que le llega. Un doble de transporte habría dado verde.
+
+**Cómo se comprueba.** El caso 12 cubre el encolado, los dos transportes, el
+fallo que no revierte, el bloqueo de un mensaje ya enviado, el límite de
+reintentos, un transporte desconocido y la cola vacía.
+
+**Lo que falta.** Nada de lo anterior. Queda la purga de datos por retención, que
+es del hito 7, y la ruleta decorativa de D19, que no está hecha y no es
+necesaria para que la campaña funcione.

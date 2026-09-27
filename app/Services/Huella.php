@@ -197,4 +197,29 @@ class Huella
     {
         return self::ambitoCampana($promocionId) . self::SEPARADOR . 'dia:' . $fecha;
     }
+
+    /**
+     * Devuelve el ambito de un ticket, para la regla de una por ticket.
+     *
+     * El numero de ticket va normalizado dentro del ambito, y no solo la huella,
+     * por una razon que parece un detalle y no lo es. Si el ambito llevase el
+     * ticket tal cual, «AB-1234» y «ab 1234» darian dos ambitos distintos y por
+     * tanto dos huellas distintas, con lo que el indice unico no las veria como
+     * la misma persona aunque la huella de dentro si coincidiese. Normalizando en
+     * los dos sitios, las dos formas tecleadas producen exactamente la misma
+     * cadena y colisionan como deben.
+     *
+     * @param int    $promocionId Campana a la que pertenece la participacion.
+     * @param string $ticket      Numero de ticket tal como lo ha escrito la
+     *                            persona.
+     *
+     * @return string Ambito con forma «campana:{id}|ticket:{normalizado}».
+     */
+    public static function ambitoTicket(int $promocionId, string $ticket): string
+    {
+        return self::ambitoCampana($promocionId)
+            . self::SEPARADOR
+            . 'ticket:'
+            . self::normalizar($ticket);
+    }
 }

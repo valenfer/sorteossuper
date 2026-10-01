@@ -3081,6 +3081,250 @@ function caso13(): void
 }
 
 /**
+ * Caso 17: la ruleta decorativa de la pantalla 2 (D19).
+ *
+ * ============================================================================
+ * POR QUE ESTE CASO NO ES «QUE SE PINTE UNA RUEDA»
+ * ============================================================================
+ *
+ * La ruleta es decorado, y una comprobacion de que aparece en pantalla pasaria
+ * aunque se cumpliera justo lo que D19 prohibe. Lo que hay que mirar es lo que
+ * la ruleta dice, porque su unico peligro es ese: si insinua que el premio depende
+ * de donde pare el dedo, cada vez que el giro no coincida con el premio hay una
+ * reclamacion, y el mostrador tiene que ir a explicar que el azar no decide nada.
+ *
+ * Las tres cosas que se comprueban son, por tanto, las tres que hacen que la
+ * ruleta NO diga eso:
+ *
+ *   1. Los sectores no llevan texto. Ni nombres de premios, ni nada. Un sector
+ *      rotulado con «Voucher de 20 euros» convierte una decoracion en una
+ *      promesa, y el nombre del premio que se ha ganado no tendria por que
+ *      coincidir con el sector donde se ha parado.
+ *
+ *   2. El unico texto es el nombre del comercio en el centro, que es el logotipo
+ *      que pide D19. Y sale escapado, como sale todo lo demás.
+ *
+ *   3. El resultado NO depende de que el giro funcione. Se comprueba que el
+ *      texto del resultado esta en el HTML de la pagina, sin ejecutar nada: si
+ *      estuviera escondido por el CSS y lo revelara un temporizador de
+ *      JavaScript, un fallo del script dejaria a la clienta mirando una pantalla
+ *      sin resultado. Esa es la comprobacion que mas cuesta y la que mas
+ *      importaba.
+ *
+ * Y una cuarta, mas pequena pero del mismo tipo: un rechazo NO gira ruleta.
+ * Hacer girar una rueda sobre una participacion que no se ha registrado solo
+ * haria esperar a la clienta para recibir un «su participacion no se ha
+ * registrado», que ya se le puede decir de frente.
+ *
+ * ============================================================================
+ * POR QUE NO SE COMPRUEBA EL GIRO EN UN NAVEGADOR REAL
+ * ============================================================================
+ *
+ * Que la rueda de seis vueltas y cuarto termine apuntando arriba es cosa del CSS,
+ * y una prueba de PHP no puede medirlo. Lo que si se puede comprobar, y se
+ * comprueba, es lo que el servidor entrega y lo que el CSS declara: que las
+ * clases existen, que el texto esta en el HTML y que el CSS no depende de
+ * JavaScript. Una prueba que necesitara un navegador seria justo lo que D14 no
+ * quiere: otra dependencia que instalar, y otra que se rompe sin avisar.
+ *
+ * @see \App\Core\Vista::renderizar()
+ * @see decision D19 del documento de especificacion
+ * @see apartado 5, pantalla 2
+ *
+ * @return void
+ */
+function caso17(): void
+{
+    echo 'Caso 17: la ruleta es decorada y el resultado no depende de ella', PHP_EOL;
+
+    borrarEscenarioDeAdjudicacion();
+
+    $escenario = crearEscenarioDeAdjudicacion(['10:00', '11:00']);
+    $promocion = (int) $escenario['promocion'];
+
+    // El nombre del comercio es el logotipo del centro de la ruleta, y se pone uno
+    // reconocible para que se pueda distinguir del nombre de la campana, que es lo
+    // que se enseña cuando el comercio no esta rellenado.
+    Aplicacion::db()->ejecutar(
+        "UPDATE promociones SET comercio_nombre = 'Surtiduria del Casco' WHERE id = ?",
+        [$promocion]
+    );
+
+    // Un tipo de premio con un nombre que se reconoceria en cualquier sitio. Este
+    // texto es el que no puede aparecer en ningun sector de la ruleta, y la
+    // comprobacion de abajo lo busca.
+    $tipoPremioId = (int) $escenario['tipo_premio'];
+    Aplicacion::db()->ejecutar(
+        'UPDATE tipos_premio SET nombre = ? WHERE id = ?',
+        ['Cesta de la compra', $tipoPremioId]
+    );
+
+    $motor = new \App\Services\Adjudicador(new ValidadorQueAcepta());
+
+    $resultado = $motor->registrar(
+        $promocion,
+        claveDePrueba('caso17-ganadora'),
+        $escenario['tramo'],
+        ['nombre' => 'Clienta de la ruleta'],
+        null,
+        null,
+        instanteDeHoy('12:00:00')
+    );
+
+    comprobarIgual('premio', $resultado['resultado'], 'La participacion que abre el caso gana un premio');
+
+    $campana = (new \App\Models\Promocion())->exigirPorId($promocion, 'x');
+    $visual = (new \App\Models\ConfiguracionVisual())->leer($promocion);
+
+    $html = \App\Core\Vista::renderizar('participacion/resultado', [
+        'titulo'    => 'Resultado',
+        'campana'   => $campana,
+        'resultado' => $resultado,
+        'visual'    => $visual,
+        'destino'   => 'azafata/promociones/' . $promocion . '/participar',
+    ]);
+
+    // ---- 1. Los sectores no llevan texto ------------------------------------
+    // El nombre del tipo de premio, «Cesta de la compra», es lo que un sector
+    // rotulado llevaria. No tiene que aparecer en ningun sitio de la pagina, y
+    // tampoco en la parte de la ruleta.
+    comprobarNoContiene(
+        $html,
+        'Cesta de la compra',
+        'El nombre del premio NO aparece en la pagina, y por tanto tampoco en la ruleta'
+    );
+
+    // Y el bloque de los sectores no lleva ningun texto dentro, que es mas fuerte
+    // que no encontrar este nombre concreto: si mañana se rotula un sector con
+    // cualquier otro nombre de premio, esta comprobacion lo detecta sin tocar la
+    // prueba.
+    //
+    // El corte empieza justo despues del cierre de la etiqueta de apertura, por
+    // eso el patron esta escrito con «class="ruleta-sectores">» y no solo con el
+    // nombre de la clase: si empezara en «ruleta-sectores» se llevaria por
+    // delante el resto de los atributos, y con ellos el texto que tienen, que
+    // para entonces ya no seria ninguno pero haria fallar la prueba sin motivo.
+    // Termina en el primer «</div>», que es el de los propios sectores porque
+    // dentro no hay nada anidado.
+    $coincideSectores = preg_match('/<div class="ruleta-sectores">(.*?)<\/div>/s', $html, $coincide);
+    $contenidoSectores = $coincideSectores === 1 ? (string) $coincide[1] : '';
+
+    comprobar(
+        $coincideSectores === 1,
+        'La ruleta trae su bloque de sectores'
+    );
+
+    // El resultado del strip_tags se compara con una cadena vacia y no con null:
+    // aqui se mira que no quede ni una letra, y los espacios de indentacion no
+    // cuentan, pero un texto vacio de verdad tampoco.
+    comprobar(
+        trim(strip_tags($contenidoSectores)) === '',
+        'El bloque de sectores no contiene texto ninguno',
+        'contiene: ' . substr(trim(strip_tags($contenidoSectores)), 0, 120)
+    );
+
+    // ---- 2. El unico texto es el nombre del comercio ------------------------
+    comprobarContiene(
+        $html,
+        'ruleta-logo',
+        'El centro de la ruleta lleva el logotipo, que es el nombre del comercio'
+    );
+    comprobarContiene(
+        $html,
+        'Surtiduria del Casco',
+        'Y el nombre del comercio es el que aparece en el centro'
+    );
+
+    // ---- 3. El resultado esta en el HTML, no lo pone JavaScript --------------
+    // Esta es la comprobacion central del caso. El texto del resultado se busca
+    // en el HTML que devuelve el servidor, antes de que el navegador ejecute
+    // nada. Si estuviera oculto y lo revelara un script, aqui no apareceria, y
+    // un fallo del script dejaria a la clienta sin ver su resultado.
+    comprobarContiene(
+        $html,
+        'Enhorabuena',
+        'El resultado esta escrito en el HTML, no lo anade el navegador'
+    );
+    comprobarContiene(
+        $html,
+        'resultado-bloque',
+        'El bloque del resultado existe en el HTML de la pagina'
+    );
+
+    // Y el bloque del resultado NO lleva la clase que anula el retardo. En un
+    // resultado adjudicado el retardo es lo correcto, porque hay ruleta girando;
+    // lo que no puede ser es que el retardo decida si el texto existe.
+    comprobarNoContiene(
+        $html,
+        'resultado-revelado',
+        'Y el bloque adjudicado no se quita el retardo del giro, que es lo que toca'
+    );
+
+    // ---- Y que el rechazo no hace girar la ruleta ---------------------------
+    borrarEscenarioDeAdjudicacion();
+
+    $escenario = crearEscenarioDeAdjudicacion(['10:00']);
+    $promocion = (int) $escenario['promocion'];
+    $campana = (new \App\Models\Promocion())->exigirPorId($promocion, 'x');
+
+    // Un rechazo no pasa por el motor de una participacion valida: se construye
+    // el mismo array que devolveria el motor, que es lo que la vista recibe, y se
+    // comprueba lo que la vista hace con el. Montar un rechazo de verdad exigiria
+    // configurar una regla y su texto, y aqui lo que se prueba es la vista.
+    $rechazoHtml = \App\Core\Vista::renderizar('participacion/resultado', [
+        'titulo'    => 'Resultado',
+        'campana'   => $campana,
+        'resultado' => [
+            'resultado'        => 'rechazada',
+            'motivo_texto'     => 'Este cupon no es de esta promocion.',
+            'codigo_reclamacion' => '',
+        ],
+        'visual'    => (new \App\Models\ConfiguracionVisual())->leer($promocion),
+        'destino'   => 'azafata/promociones/' . $promocion . '/participar',
+    ]);
+
+    comprobarNoContiene(
+        $rechazoHtml,
+        'ruleta-sectores',
+        'Un rechazo no gira ruleta: no hay nada que sortear'
+    );
+    comprobarContiene(
+        $rechazoHtml,
+        'Este cupon no es de esta promocion.',
+        'Y el motivo del rechazo se dice de frente, sin esperar a ninguna animacion'
+    );
+    comprobarContiene(
+        $rechazoHtml,
+        'resultado-revelado',
+        'Y su texto lleva el retardo anulado, porque sin ruleta no hay nada que esperar'
+    );
+
+    // ---- Y que el CSS declara las dos animaciones --------------------------
+    // El giro y la aparicion del resultado se declaran en la hoja de estilos, no
+    // en el script. Se comprueba que las dos estan, porque si la segunda se
+    // moviera al script se habria perdido justamente la garantia del punto 3.
+    $css = (string) file_get_contents(
+        dirname(__DIR__) . '/assets/css/estilos.css'
+    );
+
+    comprobar(
+        str_contains($css, '@keyframes girar'),
+        'El giro de la ruleta esta declarado en el CSS'
+    );
+    comprobar(
+        str_contains($css, '@keyframes revelar'),
+        'Y la aparicion del resultado tambien, no en un temporizador de JavaScript'
+    );
+    comprobar(
+        !str_contains($css, 'url('),
+        'La ruleta no carga ninguna imagen: sale de un degradado, como manda D14'
+    );
+
+    borrarEscenarioDeAdjudicacion();
+    limpiarPeticion();
+}
+
+/**
  * Caso 14: cerrar una campana deja los premios sin entregar y lo apunta.
  *
  * ============================================================================
@@ -4117,6 +4361,7 @@ const PRUEBAS = [
     14 => 'caso14',
     15 => 'caso15',
     16 => 'caso16',
+    17 => 'caso17',
 ];
 
 // -----------------------------------------------------------------------------

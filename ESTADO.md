@@ -98,9 +98,8 @@ participaciones, la de cola de correos y la de auditoría. El modelo de datos es
 el motor que usa las cuatro tablas centrales, el panel que las configura, la
 pantalla que las usa y el worker que manda el correo.
 
-**Lo que no hay todavía.** La ruleta decorativa del mostrador (D19), que no hace
-falta para que la campaña funcione y que se puede dejar para el final. Sigue sin
-haber HTTP en la prueba de concurrencia, por lo que se dice en la sección 4.
+**Lo que no hay todavía.** Sigue sin haber HTTP en la prueba de concurrencia, por
+lo que se dice en la sección 4.
 
 **En la raíz hay un `bbdd.png` con un diagrama de la base de datos hecho a
 mano.** Se versiona desde el hito 3, con la autorización del promotor, porque es
@@ -121,8 +120,7 @@ del hito 7 es `51fec02`.
 
 **Lo siguiente, por este orden.**
 
-1. **La ruleta de D19, si se quiere.** Decorativa, sin premios en los sectores.
-2. Los hitos del apartado 10 de la especificación que aún no han empezado.
+1. Los hitos del apartado 10 de la especificación que aún no han empezado.
 
 **Antes de escribir código nuevo, dos avisos.**
 
@@ -679,6 +677,54 @@ tenerlo, porque el siguiente que lo leyera podía dar por hecho que el
 comportamiento estaba resuelto. Si alguna vez hace falta reorganizar la cola, el
 sitio es una tabla de asignaciones con su propia fecha, no `inicio` ni `tramo_id`.
 
+**D19 — La ruleta decorativa, dentro de la pantalla de resultado.** Está hecha, en
+`views/participacion/resultado.php` y en `assets/css/estilos.css`. La decisión D19
+pide una ruleta «con los colores y el logotipo configurados en el panel, y sin
+nombres de premios en los sectores».
+
+**La ruleta no está en una pantalla aparte, y esa es la parte que conviene saber.**
+Va en la misma página que el resultado. Lo otro obligaría a guardar el resultado
+adjudicado en la sesión entre el POST y la ruleta, porque un GET no puede volver a
+adjudicar: eso es estado que se puede quedar colgado, que se pierde al cerrar la
+pestaña y que obliga a decidir qué hacer si la azafata recarga durante el giro. Con
+una sola página no hay nada que decidir, y recargar vuelve a pintar el resultado.
+
+**El resultado no depende de la ruleta, y esto es lo que hay que defender.** El
+servidor ya adjudicó antes de que llegue a la vista, así que el texto del resultado
+va escrito en el HTML desde el principio y el CSS es lo único que lo deja con
+opacidad cero durante los 3,2 segundos del giro. Sin CSS, con el CSS sin cargar, con
+las animaciones desactivadas o con `prefers-reduced-motion`, el texto se ve entero.
+Lo contrario —esconderlo en la plantilla y revelarlo con un temporizador de
+JavaScript— dejaría a la clienta mirando una pantalla sin resultado cada vez que el
+script no llegara a ejecutarse. Por eso `assets/js/aplicacion.js` no toca la ruleta.
+
+**Sin nombres de premios en los sectores.** Los sectores son solo color, en un
+degradado cónico de ocho tramos que alterna `--acento` y `--primario`. El reparto es
+simétrico a propósito: si un color ocupara más sectors que el otro, parecería que el
+color decide el premio. El único texto es el nombre del comercio en el centro, que
+es el logotipo que pide D19, y sale por `Vista::e()` como todo lo demás.
+
+**Una ruleta sin alto no se ve.** El `div` de los sectores va vacío a propósito, y un
+`div` vacío sin alto propio mide cero píxeles. El cuadrado lo reserva un
+pseudoelemento con `padding-top: 100%` y no `aspect-ratio`, porque `aspect-ratio` es
+de 2020 y las tablets del mostrador son más antiguas; los cuatro lados van escritos
+uno a uno y no con `inset` por lo mismo.
+
+**El rechazo no gira ruleta.** No hay nada que sortear en una participación que no se
+ha registrado, y hacer esperar tres segundos para terminar con un «su participación
+no se ha registrado» sería peor que decirlo de frente. El rechazo lleva la clase
+`resultado-revelado`, que anula el retardo; el resultado adjudicado no la lleva.
+
+**Cómo se comprueba.** El caso 17 (`caso17()`) pinta la vista con un resultado real y
+mira lo que sale, no lo que se quería. Comprueba que el bloque de sectores no
+contiene texto ninguno —con un nombre de premio reconocible en la base de datos, que
+es lo que un sector rotulado llevaría—, que el centro trae el nombre del comercio,
+que el texto del resultado está en el HTML antes de que ejecute nada el navegador, y
+que un rechazo no trae ruleta ni retardo. También mira el CSS: que el giro y la
+aparición estén declarados ahí y no en un temporizador, y que la ruleta no cargue
+ninguna imagen. Lo que no se comprueba es dónde para la rueda, porque eso lo decide
+el navegador y una prueba de PHP no puede medirlo.
+
 ### Hito 5 — Correo (`550eaa8`)
 
 **Qué hay que construir.** Los dos transportes de la decisión D1, la cola de
@@ -717,9 +763,8 @@ a lo que le llega. Un doble de transporte habría dado verde.
 fallo que no revierte, el bloqueo de un mensaje ya enviado, el límite de
 reintentos, un transporte desconocido y la cola vacía.
 
-**Lo que falta.** Nada de lo anterior. Queda la purga de datos por retención, que
-es del hito 7, y la ruleta decorativa de D19, que no está hecha y no es
-necesaria para que la campaña funcione.
+**Lo que falta.** Nada de lo anterior. La purga de datos por retención, del hito 7,
+está hecha.
 
 ### Hito 6 — Cierre y panel de seguimiento (`53f90be`)
 

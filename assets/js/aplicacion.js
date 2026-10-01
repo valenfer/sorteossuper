@@ -5,9 +5,18 @@
  * QUE HACE ESTE FICHERO Y POR QUE ES TAN CORTO
  * ============================================================================
  *
- * En el hito 1 no hay ruleta ni boleteria, asi que aqui solo hay las tres cosas que
- * hacen falta en cualquier pantalla y que se pueden resolver con unas pocas
+ * En el hito 1 no habia ruleta ni boleteria, asi que aqui solo hay las tres cosas
+ * que hacen falta en cualquier pantalla y que se pueden resolver con unas pocas
  * lineas sin ninguna libreria.
+ *
+ * LA RULETA DE D19 NO ESTA EN ESTE FICHERO, y es deliberado. La ruleta se pinta y
+ * se gira con CSS, y el resultado ya esta escrito en el HTML cuando llega el
+ * navegador: el CSS solo lo deja tapado durante el giro y lo revela despues. No
+ * hace falta ningun temporizador aqui porque un temporizador seria justo el
+ * fallo que hay que evitar, el que dejaria a la clienta mirando una pantalla sin
+ * resultado si el script no llega a ejecutarse o se ejecuta tarde. Lo que protege
+ * esa garantia no es una linea de JavaScript, sino que en la plantilla el texto
+ * este escrito y lo esconda el CSS.
  *
  * La ausencia de jQuery y de cualquier framework de JavaScript es una decision
  * (D14), no una escasez. Una tablet de mostrador tiene que abrir la pantalla en

@@ -508,7 +508,13 @@ de campaña como validador real, y el envío de correo.
 - **Un asiento de auditoría por campaña**, con los tres recuentos. Es idempotente y
   va pensado para cron.
 
-**Pendiente.** La ruleta decorativa del mostrador (D19).
+**D19 está confirmada y ya no está pendiente.** La ruleta decorativa va dentro de la
+misma pantalla que el resultado, no en una página aparte, y no hay nada pendiente que
+se sepa. Los sectores son solo color, sin nombres de premios: el nombre del comercio
+va en el centro. Y el resultado no depende de la ruleta: el servidor ya adjudicó, el
+texto va escrito en el HTML desde el principio y lo único que lo tapa durante el giro
+es el CSS. Sin CSS, o con las animaciones desactivadas, se ve igual; por eso no hay
+ningún temporizador en JavaScript. Un rechazo no hace girar la ruleta.
 
 **D4 está confirmada y ya no está pendiente.** La cola de premios se mantiene a lo
 largo de los tramos y de los días, y el cierre no reubica las unidades no

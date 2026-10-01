@@ -134,6 +134,13 @@ body.sin-sesion {
     *::after {
         animation-duration: .01ms !important;
         transition-duration: .01ms !important;
+
+        /* El retardo tambien se anula, y no solo la duracion. Sin esto, la
+           ruleta dejaria de girar pero el resultado seguiria escondido tres
+           segundos y apareciendo de golpe: exactamente el efecto contrario del
+           que se busca, porque a quien le marean el movimiento no se le quiere
+           hacer esperar al resultado. */
+        animation-delay: 0s !important;
     }
 }
 
@@ -788,6 +795,162 @@ table.tabla tbody tr:last-child td {
     clip: rect(0 0 0 0);
     white-space: nowrap;
     border: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Pantalla 2: la ruleta decorativa (D19)
+   --------------------------------------------------------------------------
+   La ruleta se construye solo con un degradado conico, sin imagenes ni SVG. Es
+   una decision de D14: una imagen girando habria que subirla al panel, y el
+   panel ya tiene bastante que configurar. Con un degradado sale la rueda entera
+   desde el CSS, y los colores salen de las mismas custom properties que usa el
+   resto de la pantalla.
+
+   NO HAY NOMBRES DE PREMIOS EN LOS SECTORES, y no es estetica: D19 lo prohibe
+   porque un sector rotulado haria pensar que el premio depende de donde pare el
+   dedo, y eso genera reclamaciones cuando el giro no coincide con el premio que
+   el servidor ya adjudico. Los sectores son solo color. El unico texto es el
+   nombre del comercio en el centro.
+   -------------------------------------------------------------------------- */
+.ruleta {
+    position: relative;
+    width: min(14rem, 60vw);
+    margin: 0 auto 1.5rem;
+}
+
+/* El cuadrado se reserva con un pseudoelemento y un padding-top del 100%, y no
+   con «aspect-ratio», por dos razones. La primera es que el divisor de los
+   sectores esta vacio a proposito: no lleva texto, ni de premio ni de otro tipo,
+   y un div vacio sin alto propio mide cero pixeles, con lo que la rueda no se
+   veria. La segunda es el navegador: «aspect-ratio» es de 2020 y las tablets del
+   mostrador son mas antiguas que eso. El pseudoelemento existe solo para dar
+   altura, asi que no lleva nada dentro ni puede tener contenido por descuido. */
+.ruleta::before {
+    content: '';
+    display: block;
+    padding-top: 100%;
+}
+
+/* La rueda gira y se para. La duracion la fija la animacion y no un temporizador
+   de JavaScript: si el script no llega a ejecutarse, la rueda se queda quieta y
+   el resultado se ve igualmente, que es lo unico que importa. */
+@keyframes girar {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        /* Seis vueltas y un cuarto. Las vueltas enteras hacen que el final sea un
+           cuarto de vuelta, que es donde queda la aguja, y eso es lo que hace que
+           el ojo siga el giro hasta el final. */
+        transform: rotate(2250deg);
+    }
+}
+
+.ruleta-sectores {
+    /* Se estira sobre el cuadrado que reserva el pseudoelemento de arriba. Se
+       escriben los cuatro lados y no «inset» por lo mismo que antes: «inset» es
+       tambien de 2021 y aqui se busca que esto funcione en una tablet vieja. */
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    border-radius: 50%;
+    /* Ocho sectores de dos colores alternados. El reparto es simetrico a
+       proposito: si un color ocupara mas que el otro, pareceria que el color
+       decide el premio, que es justo lo que D19 quiere evitar. */
+    background: conic-gradient(
+        from -22.5deg,
+        var(--acento) 0deg 45deg,
+        var(--primario) 45deg 90deg,
+        var(--acento) 90deg 135deg,
+        var(--primario) 135deg 180deg,
+        var(--acento) 180deg 225deg,
+        var(--primario) 225deg 270deg,
+        var(--acento) 270deg 315deg,
+        var(--primario) 315deg 360deg
+    );
+    box-shadow: var(--sombra), inset 0 0 0 .5rem var(--superficie);
+    animation: girar 3.2s cubic-bezier(.15, .75, .25, 1) both;
+}
+
+/* El centro con el logotipo. Va por encima de los sectores y tapa el punto
+   exacto de giro, que es lo que hace que la parada se lea. */
+.ruleta-centro {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 38%;
+    height: 38%;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: var(--superficie);
+    border: 2px solid var(--acento);
+    text-align: center;
+    padding: .25rem;
+}
+
+.ruleta-logo {
+    font-size: .75rem;
+    font-weight: 700;
+    line-height: 1.15;
+    /* El nombre de un supermercado puede ser largo de verdad. Se recorta a tres
+       lineas con puntos suspensivos en vez de desbordar el circulo. El recorte
+       con -webkit-line-clamp es el que funciona en los navegadores de una tablet
+       de supermercado, que son de los mas antiguos que se ven a diario. */
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+
+/* La aguja es un triangulito que no gira con la rueda: marca arriba y se queda
+   quieta, que es lo que hace legible la parada. */
+.ruleta-aguja {
+    position: absolute;
+    top: -.25rem;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: .6rem solid transparent;
+    border-right: .6rem solid transparent;
+    border-top: .9rem solid var(--texto);
+}
+
+/* El bloque entero del resultado —la foto, el titular, el texto y el boton— se
+   revela despues del giro, con el mismo retardo que la duracion de la
+   animacion. El retardo va en el CSS y no en un temporizador de JavaScript por
+   un motivo concreto: si el script no se ejecuta, o se ejecuta tarde, o el
+   navegador tiene las animaciones desactivadas, el texto se ve igual. Aqui lo
+   peligroso seria al reves, esconderlo en el HTML, porque entonces un fallo de
+   JavaScript dejaria a la clienta mirando una pantalla sin resultado.
+
+   Y el nombre de la clase lo dice al reves de lo habitual: «resultado-revelado»
+   es el estado BUENO, el de ver el texto. La plantilla lo pone cuando no hay
+   ruleta, y la animacion lo quita. Si el CSS no llega a aplicarse, el nombre de
+   la clase esta y el resultado se ve. */
+.resultado-bloque {
+    animation: revelar .4s ease-out 3.2s both;
+}
+
+.resultado-revelado {
+    animation: none;
+}
+
+@keyframes revelar {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
 }
 
 /* --------------------------------------------------------------------------

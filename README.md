@@ -279,6 +279,7 @@ sola conexión no habría competencia que medir.
 | `/admin/promociones/{id}/reglas` | Una por persona, por ticket, códigos de acceso y códigos postales. |
 | `/admin/promociones/{id}/ajustes` | Correo, modo simulación y días de retención. |
 | `/admin/promociones/{id}/apariencia` | Colores, banners y los textos de resultado. |
+| `/admin/promociones/{id}/seguimiento` | Cómo va la campaña en directo, con filtros, y el botón de cerrarla. |
 
 **Ninguna pantalla necesita JavaScript.** En la del formulario, la última fila de
 la tabla está siempre vacía: se añade un campo escribiendo su clave y su etiqueta
@@ -442,10 +443,24 @@ de campaña como validador real, y el envío de correo.
   el mensaje a la cola con su error y reintenta hasta un límite. La clienta ya
   tiene el premio adjudicado aunque el mensaje no llegue.
 
-**Pendiente.** La ruleta decorativa del mostrador (D19), el cierre de campaña que
-pasa las unidades no entregadas a `no_entregada` y la purga de datos por
-retención. La decisión D4 de mover los premios pendientes entre días está
-prevista pero sin usar todavía, como explica `ConfiguracionPromocion`.
+**Terminado (hito 6).** El cierre de campaña y el panel de seguimiento.
+
+- **El cierre.** `CierrePromocion` cierra una campaña dentro de una transacción y
+  con `GET_LOCK` sobre esa campaña, que es la misma defensa que usa el motor para
+  que dos adjudicaciones simultáneas no repartan el mismo premio. Las unidades
+  que estaban programadas y nadie llegó a recoger pasan a `no_entregada`; no se
+  adjudican a posteriori a nadie. Todo queda anotado en `auditoria` con el recuento
+  de antes y el de después.
+- **El panel.** `Seguimiento` agrega lo que la pantalla enseña: los estados de las
+  unidades, las participaciones válidas, los intentos rechazados por motivo, los
+  correos, el tramo en curso, el historial de auditoría y las diferencias entre el
+  plan y el calendario. Filtra por fecha, tramo y tipo de premio, y cada visita
+  queda anotada con qué filtros se usó y cuántas filas se vieron, como exige D18.
+
+**Pendiente.** La ruleta decorativa del mostrador (D19) y la purga de datos por
+retención. La decisión D4 de mover los premios pendientes entre días sigue prevista
+pero sin usar: el cierre deja las unidades no entregadas donde están y anota el
+recuento, sin reubicarlas.
 
 **Cómo saber si está sano.** Con el servidor arrancado:
 

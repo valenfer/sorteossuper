@@ -130,6 +130,38 @@ class User extends Modelo
     }
 
     /**
+     * Devuelve el nombre de acceso de un usuario, o cadena vacia si no existe.
+     *
+     * La auditoria guarda el nombre del usuario que ha hecho cada cosa, para que
+     * el historial siga siendo legible dentro de tres años, cuando la cuenta
+     * puede que ya no exista. Ese nombre hay que resolverlo en el momento en que
+     * se escribe el asiento, no leerlo despues, porque despues la columna de la
+     * auditoria y la de la cuenta podrian no coincidir.
+     *
+     * Un identificador que no sea positivo devuelve cadena vacia en vez de consultar
+     * la base de datos, porque \App\Core\Autorizacion::usuarioId() devuelve cero
+     * cuando no hay sesion, y el cero no es una cuenta. Preguntar por el sale
+     * barato, pero devolveria cadena vacia igual y hace la intencion mas clara.
+     *
+     * @param int|null $usuarioId Usuario a consultar, o null si no hay sesion.
+     *
+     * @return string Nombre del usuario, o cadena vacia.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function nombreDe(?int $usuarioId): string
+    {
+        if ($usuarioId === null || $usuarioId <= 0) {
+            return '';
+        }
+
+        return (string) $this->db->valor(
+            'SELECT nombre FROM usuarios WHERE id = ? LIMIT 1',
+            [$usuarioId]
+        );
+    }
+
+    /**
      * Crea un usuario con su contrasena ya hasheada.
      *
      * @param string      $nombre        Nombre de acceso. Se normaliza a

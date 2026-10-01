@@ -239,4 +239,9 @@ $exito = Vista::aviso('exito');
         <span class="tarjeta-menu-titulo">Ajustes</span>
         <span class="tarjeta-menu-texto">Correo, simulacion, retencion</span>
     </a>
+
+    <a class="tarjeta-menu" href="<?= Vista::e(Aplicacion::url($base . '/seguimiento')) ?>">
+        <span class="tarjeta-menu-titulo">Seguimiento</span>
+        <span class="tarjeta-menu-texto">Como va y cerrar la campana</span>
+    </a>
 </nav>

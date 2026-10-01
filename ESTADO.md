@@ -88,16 +88,20 @@ las reglas de campaña como validador real (`ReglasCampana` con
 `IdentidadCampana`), los dos transportes de correo, la cola con reintentos y el
 worker `bin/enviar_correos.php`. Ver el registro de hitos, al final.
 
+**Hecho (hito 6).** El cierre de promoción y el panel de seguimiento del
+administrador: el cierre transaccional con bloqueo de campaña, y la pantalla con
+métricas, filtros, listados, diferencias entre plan y calendario e historial. Ver el
+registro de hitos, al final.
+
 **Las 15 tablas del esquema ya existen** (`sql/schema.sql`), incluida la de
 participaciones, la de cola de correos y la de auditoría. El modelo de datos está,
 el motor que usa las cuatro tablas centrales, el panel que las configura, la
 pantalla que las usa y el worker que manda el correo.
 
-**Lo que no hay todavía.** El panel de seguimiento del administrador (métricas,
-filtros, auditoría y cierre de promoción), la purga de datos por retención, y la
-ruleta decorativa del mostrador (D19), que no hace falta para que la campaña
-funcione y que se puede dejar para el final. Sigue sin haber HTTP en la prueba de
-concurrencia, por lo que se dice en la sección 4.
+**Lo que no hay todavía.** La purga de datos por retención, y la ruleta decorativa
+del mostrador (D19), que no hace falta para que la campaña funcione y que se puede
+dejar para el final. Sigue sin haber HTTP en la prueba de concurrencia, por lo que
+se dice en la sección 4.
 
 **En la raíz hay un `bbdd.png` con un diagrama de la base de datos hecho a
 mano.** Se versiona desde el hito 3, con la autorización del promotor, porque es
@@ -112,18 +116,17 @@ Este es el resumen para retomar el trabajo. Si solo se lee una cosa de todo el
 documento, que sea esto.
 
 **Punto exacto en el que está.** Los hitos 0 a 5 están cerrados y subidos a
-`origin/master`. No hay nada a medias: el árbol de trabajo está limpio y la suite
-pasa entera. El commit del hito 5 es `550eaa8`; el `1ae1259` que viene detrás
-solo apunta este documento al hash del hito.
+`origin/master`. El hito 6 —cierre de promoción y panel de seguimiento— está
+**escrito y verificado, pero sin commit**: las tres comprobaciones pasan y la suite
+está entera, así que lo que falta es el commit y la subida, no trabajo. Al retomar,
+mirar `git status` antes de nada: los ficheros del hito 6 están modificados y sin
+versionar.
 
 **Lo siguiente, por este orden.**
 
-1. **Hito 6, panel de seguimiento.** Es lo que más falta y lo que más informará
-   al promotor: listado de participaciones con filtros, métricas de la campaña,
-   y el cierre, que es la parte con reglas de verdad (D4 pasa las unidades no
-   entregadas a `no_entregada`, sin adjudicación retroactiva, y ambas cosas quedan
-   en `auditoria`). Empezar por el cierre, que es el que tiene el requisito
-   escrito; las métricas son pantalla.
+1. **Cerrar el hito 6.** Commit y subida. Antes, decidir si la suposición sin
+   confirmar de D4 (abajo) se queda como está documentada o se pregunta al
+   promotor: el cierre la usa y es el único punto del proyecto donde se nota.
 2. **Hito 7, purga de datos.** El worker del correo ya está, así que de este hito
    solo queda la purga por días de retención, que usa la columna
    `promociones.retencion_dias`.
@@ -131,11 +134,11 @@ solo apunta este documento al hash del hito.
 
 **Antes de escribir código nuevo, dos avisos.**
 
-- La sección «El flujo de la azafata» del `README.md` y la entrada del hito 5 en
-  el registro de hitos de este documento explican tres fallos que ya ocurrieron y
-  por qué las fronteras entre módulos se prueban ahora de punta a punta. El
-  patrón se repite: un dato que viaja entre dos módulos se rompe en el paso, no en
-  los extremos.
+- El cierre de promoción y el panel son los primeros sitios donde una columna
+  nullable y un identificador que no existe se rompen en silencio. Los dos fallos
+  que encontró el hito 6 son el mismo: un `usuario_id` de cero y una clave de vista
+  que `extract()` no deja pasar. Los dos habrían pasado cualquier revisión de
+  lectura, y los dos los encontró la prueba, no la vista.
 - Las secciones «Reglas que no hay que romper» y «Trampas conocidas» de este
   documento son las que más tiempo ahorran. La primera la hace cumplir el
   verificador; la segunda no, y por eso está aquí.
@@ -143,8 +146,9 @@ solo apunta este documento al hash del hito.
 **Lo único que está decisionado pero sin hacer**, y que conviene decidir antes de
 programar: la suposición de D4 sobre la cola de premios pendientes es del
 implementador, no del promotor, y sigue sin confirmar (sección «Riesgos y
-limitaciones abiertas»). El cierre del hito 6 la toca, así que la pregunta
-conviene hacerla antes.
+limitaciones abiertas»). El cierre del hito 6 la implementa tal cual —las unidades
+no entregadas pasan a `no_entregada` y no se reubican— y deja el supuesto anotado
+en la respuesta del cierre, pero la decisión sigue siendo del promotor.
 
 ## 4. Decisiones que condicionan el trabajo
 
@@ -314,7 +318,7 @@ también `views/`, que antes se saltaba.
 | Asunto | Estado |
 | --- | --- |
 | **El límite de intentos se puede saltar borrando las cookies.** Vive en la sesión del navegador. | Conocido. Documentado en el README. La mitigación que sirve de verdad es un límite por dirección IP en Apache, que no se ha añadido porque depende de la configuración del servidor y no del proyecto. |
-| **La suposición sobre la cola está sin confirmar por el promotor.** Que los premios pendientes pasen al tramo y al día siguiente es un supuesto de implementación, no una regla confirmada. | Pendiente de confirmar antes de una campaña real, como avisa el apartado 6. |
+| **La suposición sobre la cola está sin confirmar por el promotor.** Que los premios pendientes pasen al tramo y al día siguiente es un supuesto de implementación, no una regla confirmada. | El hito 6 ya lo implementa: el cierre pasa las unidades no entregadas a `no_entregada` y no las reubica, y anota el recuento en la respuesta. Sigue siendo un supuesto del implementador, así que conviene confirmarlo antes de una campaña real, como avisa el apartado 6. |
 | **Horas de verano.** Un tramo que cruce el cambio de hora de octubre tiene una hora de pared ambigua o inexistente. | El apartado 13 pide validarlo. Está pendiente de implementar en el generador de calendario. |
 | **La instalación de XAMPP no tiene `mail()` ni GD.** | Resuelto por diseño (D1 y validación con `finfo`). |
 | **La base `sorteos` tiene filas de auditoría de las pruebas manuales.** | Sin consecuencias: el instalador nunca borra datos y el repositorio no contiene la base. |
@@ -389,6 +393,30 @@ Cosas que ya han costado tiempo y que conviene no volver a cruzar.
   código es de la unidad adjudicada, que es la que hay que recoger en el
   mostrador. Las pruebas que lo busquen en la participación reciben un error de
   columna inexistente.
+- **Una clave de vista llamada `datos` no llega a la plantilla.** `Vista::renderizar()`
+  hace `extract($datos, EXTR_SKIP)` sobre un parámetro que ya se llama `$datos`, y
+  `EXTR_SKIP` no pisa variables que ya existen: la clave se queda en el aire y la
+  plantilla recibe otra cosa. El síntoma es un aviso de «clave indefinida» en una
+  línea que no habla de `datos`, que es lo que hace que cueste de encontrar. La
+  clave del panel de seguimiento es `$panel`, y el motivo está escrito en el
+  controlador.
+- **`Autorizacion::usuarioId()` devuelve `0`, no `null`, sin sesión.** Y `0` no
+  puede ser un `usuarios.id`, porque la clave empieza en uno. Cualquier escritura
+  en `auditoria` con ese identificador revienta con un error de clave foránea. Se
+  normaliza en `Auditoria::registrar()`, no en quien llama.
+- **`asignarParametros()` solo rellena los marcadores de la ruta.** Los filtros de
+  la URL no llegan por ahí: el controlador los lee de `$_GET`. En una prueba, un
+  filtro pasado en el array de parámetros se pierde en silencio y la comprobación
+  pasa comprobando la pantalla sin filtro.
+- **El instalador aplica `sql/schema.sql` y *después* todas las migraciones.** Una
+  migración que añada columnas que el esquema ya tiene tiene que llevar
+  `ADD COLUMN IF NOT EXISTS`, o la instalación desde cero falla con «columna
+  duplicada» justo en el escenario donde no hay datos que perder.
+- **`borrarEscenarioDePanel()` borra en orden de dependencia, y ese orden cambia.**
+  En cuanto un caso crea participaciones, `participaciones` e
+  `intentos_rechazados` tienen que ir antes que `tramos`. Si no, la limpieza falla
+  con un error de integridad **después** de que el caso haya pasado todas sus
+  comprobaciones, y el fallo señala la limpieza, no lo que falló.
 
 ## 9. Entorno
 
@@ -666,3 +694,80 @@ reintentos, un transporte desconocido y la cola vacía.
 **Lo que falta.** Nada de lo anterior. Queda la purga de datos por retención, que
 es del hito 7, y la ruleta decorativa de D19, que no está hecha y no es
 necesaria para que la campaña funcione.
+
+### Hito 6 — Cierre y panel de seguimiento (sin commit)
+
+**Qué hay que construir.** El cierre de una promoción y la pantalla de
+seguimiento del administrador: métricas, filtros, listados y auditoría.
+
+**Lo que hay.**
+
+- `app/Services/CierrePromocion.php` cierra una promoción en una transacción con
+  `GET_LOCK` sobre la campaña, igual que el motor se bloquea a sí mismo para
+  adjudicaciones. Es la misma defensa con otro objetivo: que dos cierres
+  simultáneos no cuentan dos veces las unidades pendientes.
+- Al cerrar, las unidades que estaban `programada` pasan a `no_entregada` con
+  `UnidadPremio::noEntregarProgramadas()`, la promoción pasa a `finalizada` con su
+  `cerrada_en`, y todo queda en una fila de `auditoria` con el recuento de antes y
+  de después. **No hay adjudicación retroactiva**: un premio que nadie llegó a
+  entregar no se le da a nadie a posteriori.
+- Cerrar dos veces no es idempotente a propósito: la segunda llamada lanza
+  `ErrorAplicacion` con un mensaje claro. El efecto sí lo es —no queda nada a
+  medias— y la segunda llamada es un error de quien la hizo, no algo que deba
+  tragarse en silencio.
+- `app/Services/Seguimiento.php` agrega lo que la pantalla necesita: los cinco
+  estados de unidad más las pendientes, participaciones válidas y sin premio,
+  intentos rechazados por motivo, correos por estado, el tramo en curso, el
+  historial de auditoría y los dos listados con filtro.
+- Filtros por fecha, tramo y tipo de premio. Los nombres que no estén en la lista
+  se ignoran y una fecha mal escrita se descarta: un filtro que llega a la
+  consulta tiene que ser un filtro, no texto de la URL.
+- `views/admin/seguimiento/panel.php` pinta todo eso, avisa de las diferencias
+  entre el plan y el calendario, y ofrece el cierre con CSRF.
+- `Auditoria` gana dos columnas propias, `filtros` y `filas_mostradas`, en vez de
+  meterse en el JSON de `datos_despues`. La decisión D18 necesita poder consultar
+  «quién miró qué lista y cuántas filas vio» con una consulta normal, no con
+  funciones de MySQL sobre un documento.
+
+**Lo que encontró el caso 14 al escribirse.** Dos cosas que ninguna revisión de
+lectura habría visto.
+
+La primera, `Autorizacion::usuarioId()` devuelve `0` cuando no hay sesión, y `0`
+no puede existir en `usuarios`, cuya clave empieza en uno. Mirar el panel desde
+consola —o desde una prueba— reventaba con un error de clave foránea en la
+auditoría. Se normaliza en `Auditoria::registrar()`, en el modelo, y no en el
+servicio que llama: cualquier llamante futuro hereda la corrección.
+
+La segunda, y más silenciosa: la vista recibía sus datos bajo la clave `datos`, y
+`Vista::renderizar()` llama a `extract($datos, EXTR_SKIP)` sobre un parámetro que
+ya se llama `$datos`. `EXTR_SKIP` no pisa variables que existen, así que la clave
+`datos` no llegaba nunca a la plantilla. La plantilla recibía el array equivocado
+y avisaba de una clave que faltaba, en un sitio que no tiene nada que ver con la
+clave `datos`. La variable se llama `$panel` a propósito, y está escrito por qué en
+`ControladorSeguimiento`.
+
+**Lo que encontró el caso 15 al escribirse.** El campo de fecha del panel salía
+relleno con la fecha de hoy aunque no hubiera filtro. No era un error de cuentas,
+era una mentira pequeña: la pantalla enseñaba la campaña entera con un filtro
+aparente, y pulsar «Aplicar» sin querer vaciaba el listado. Ahora el campo se
+pinta vacío y el filtro solo existe si alguien lo ha puesto.
+
+**Dos avisos para quien siga.**
+
+- `sql/schema.sql` trae ya las dos columnas de la auditoría y
+  `sql/migraciones/0001_auditoria_filtros.sql` las añade. El instalador hace las dos
+  cosas, en ese orden, así que **la migración tiene que ser idempotente**:
+  `ADD COLUMN IF NOT EXISTS`. Sin eso, una instalación desde cero —que es cuando
+  no hay datos que perder y cuando más fácil sería probar— peta con «columna
+  duplicada». Que el esquema y las migraciones digan lo mismo no es redundancia,
+  es el requisito para que las dos cosas funcionen.
+- `borrarEscenarioDePanel()` borra en orden de dependencia, y ahora que los casos
+  crean participaciones, `participaciones` e `intentos_rechazados` tienen que irse
+  **antes** que `tramos`. Si no, el fallo aparece al final de un caso que en
+  realidad había pasado todo, como un error de integridad que no señala el sitio
+  donde está el problema.
+
+**Cómo se comprueba.** El caso 14 cubre el cierre entero, con su auditoría y con
+la pantalla. El caso 15 cubre el panel, los tres filtros, las fechas inválidas, la
+auditoría de la D18, el campo de fecha vacío y el aviso de desajuste del
+calendario. La suite son 16 casos y 371 comprobaciones.

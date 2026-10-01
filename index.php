@@ -308,6 +308,12 @@ $router->get('admin/promociones/{id}/calendario', 'ControladorCampana', 'calenda
 $router->post('admin/promociones/{id}/calendario/generar', 'ControladorCampana', 'generarCalendario', $admin);
 $router->post('admin/promociones/{id}/calendario/{unidad}/retirar', 'ControladorCampana', 'retirarUnidad', $admin);
 
+// Panel de seguimiento y cierre. El cierre va en POST con CSRF porque consume las
+// unidades programadas y no tiene vuelta atras: un enlace se pulsa con un clic de
+// mas y el resultado seria una campana cerrada sin querer.
+$router->get('admin/promociones/{id}/seguimiento', 'ControladorSeguimiento', 'panel', $admin);
+$router->post('admin/promociones/{id}/seguimiento/cerrar', 'ControladorSeguimiento', 'cerrar', $admin);
+
 // -----------------------------------------------------------------------------
 // 5. Despacho.
 // -----------------------------------------------------------------------------

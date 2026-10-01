@@ -407,6 +407,64 @@ class Promocion extends Modelo
     }
 
     /**
+     * Cierra una campana: la pasa a finalizada y le pone la hora de cierre.
+     *
+     * ============================================================================
+     * POR QUE ESTO NO ES UN cambiarEstado() MAS
+     * ============================================================================
+     *
+     * Porque cerrar una campana no es cambiar una etiqueta: es registrar un hecho
+     * con su hora, y la columna cerrada_en existe precisamente para eso. Si el
+     * cierre se hiciera con el cambiarEstado() de arriba, la campana quedaria
+     * finalizada sin saber cuando, y el panel no podria distinguir una campana
+     * que se cerro hace un minuto de una que lleva un ano cerrada.
+     *
+     * El instante se recibe como parametro y no se pide aqui a
+     * \App\Core\Aplicacion::ahora(), para que el servicio de cierre use la misma
+     * hora en las unidades y en la campana. Si cada uno pidiera la hora por su
+     * cuenta, entre una operacion y la otra pasarian unos milisegundos, y las dos
+     * marcas serian distintas por un motivo que no significa nada.
+     *
+     * ============================================================================
+     * POR QUE EL WHERE LLEVA EL ESTADO ANTERIOR
+     * ============================================================================
+     *
+     * Por lo mismo que en \App\Models\UnidadPremio::noEntregarProgramadas(): para
+     * que el cierre no pueda repetirse. Con WHERE estado = 'activa', la segunda
+     * llamada no afecta a ninguna fila y el servicio puede detectarlo y avisar en
+     * lugar de escribir una segunda vez. Sin esa condicion, un doble clic volveria
+     * a confirmar el cierre y volveria a mover las marcas de tiempo de una
+     * campana que ya estaba cerrada.
+     *
+     * @param int    $id      Identificador de la campana.
+     * @param string $momento Instante del cierre, en el formato de la base de
+     *                        datos.
+     *
+     * @return int Numero de filas afectadas: 1 si se ha cerrado ahora, 0 si ya
+     *             estaba cerrada.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la escritura falla.
+     */
+    public function finalizar(int $id, string $momento): int
+    {
+        return $this->db->ejecutar(
+            'UPDATE promociones
+                SET estado = ?,
+                    cerrada_en = ?,
+                    actualizada_en = ?
+              WHERE id = ?
+                AND estado = ?',
+            [
+                self::ESTADO_FINALIZADA,
+                $momento,
+                $momento,
+                $id,
+                self::ESTADO_ACTIVA,
+            ]
+        );
+    }
+
+    /**
      * Cuenta las campanas agrupadas por estado.
      *
      * @return array<string, int> Estados como claves y numero de campanas como

@@ -2955,6 +2955,563 @@ function caso13(): void
 }
 
 /**
+ * Caso 14: cerrar una campana deja los premios sin entregar y lo apunta.
+ *
+ * ============================================================================
+ * QUE COMPRUEBA Y POR QUE
+ * ============================================================================
+ *
+ * El cierre es la operacion mas dificil de deshacer de todo el panel, y por eso
+ * se comprueba en tres frentes distintos y no solo en que la campana pase a
+ * finalizada.
+ *
+ * Primero, que las unidades programadas pasan a no_entregadas y que las que ya
+ * estaban entregadas NO se tocan. Esa segunda parte es la importante: un cierre
+ * que volviera limpia el estado de toda la cola dejaria el historico de premios
+ * entregado inservible, y es el fallo mas grave posible porque no se ve hasta que
+ * alguien intenta resolver una reclamacion de hace tres semanas.
+ *
+ * Segundo, que cerrar dos veces no hace nada la segunda vez. Un doble clic en un
+ * boton es lo mas normal del mundo en una tablet con la pantalla suelta, y no
+ * puede dejar dos filas de auditoria ni mover otra vez las marcas de tiempo.
+ *
+ * Tercero, que queda escrito quien ha cerrado, cuando y cuantos premios se han
+ * quedado sin reclamar. Sin esa fila, despues no hay forma de responder a la
+ * pregunta que mas se le hace a un supermercado: «¿y estos tres premios por que
+ * no se entregaron?».
+ *
+ * @return void
+ */
+function caso14(): void
+{
+    echo 'Caso 14: cerrar la campana consume los premios sin entregar y lo registra', PHP_EOL;
+
+    $db = Aplicacion::db();
+    $escenario = crearEscenarioDePanel(['premios' => 1, 'tramos' => 1]);
+    $id = (int) $escenario['promocion'];
+
+    (new \App\Services\Calendario())->generar($id);
+    (new \App\Services\ConfiguracionPromocion())->activar($id);
+    limpiarPeticion();
+
+    $unidades = new \App\Models\UnidadPremio();
+
+    // El escenario pone dos unidades de cada premio en cada tramo, y hay un solo
+    // tramo con un solo premio, asi que hay dos. Se coge una para entregarla a
+    // mano y dejar la otra programada: sin esa entrega, el cierre no tendria nada
+    // que conservar y la comprobacion central no probaria nada.
+    $ids = array_map(
+        static fn (array $fila): int => (int) $fila['id'],
+        $unidades->listarParaCalendario($id, [], 10)
+    );
+
+    comprobarIgual(2, count($ids), 'El escenario ha dejado dos unidades programadas');
+
+    $estados = $unidades->contarPorEstado($id);
+    comprobarIgual(2, (int) ($estados[\App\Models\UnidadPremio::ESTADO_PROGRAMADA] ?? 0), 'Las dos unidades empiezan programadas');
+
+    // La entrega se hace con el codigo de la propia participacion, no con un
+    // UPDATE a mano, para que lo que se comprueba despues sea el estado que deja
+    // el motor y no uno escrito a proposito para que la prueba pase.
+    //
+    // Las horas van en la fecha del tramo, que el escenario de pruebas pone en la
+    // de hoy. Se leen de ahi en vez de escribirse fijas por la misma razon que en
+    // el caso 15: una fecha escrita a mano hace que el caso dependa del dia en que
+    // se ejecuta.
+    $fecha = (string) (new \App\Models\Tramo())->exigirPorId((int) $escenario['tramos'][0], '', $id)['fecha'];
+    $entrega = $fecha . ' 10:12:00';
+    $cierreInstante = $fecha . ' 20:00:00';
+
+    $participacionId = $db->insertar(
+        'INSERT INTO participaciones (
+             promocion_id, tramo_id, clave_idempotencia, momento, resultado, datos, es_simulacion, creado_en
+         ) VALUES (?, ?, ?, ?, ?, ?, 0, ?)',
+        [
+            $id,
+            (int) $escenario['tramos'][0],
+            claveDePrueba('caso14-ganadora'),
+            $entrega,
+            \App\Models\Participacion::RESULTADO_PREMIO,
+            '{"dni":"12345678Z"}',
+            $entrega,
+        ]
+    );
+
+    $codigo = $unidades->generarCodigoReclamacion();
+    $unidades->entregar($ids[0], $participacionId, $entrega, $codigo);
+
+    $estados = $unidades->contarPorEstado($id);
+    comprobarIgual(1, (int) ($estados[\App\Models\UnidadPremio::ESTADO_ENTREGADA] ?? 0), 'Antes de cerrar hay una unidad entregada');
+
+    // ---- El cierre --------------------------------------------------------
+    $cierre = new \App\Services\CierrePromocion();
+    $instante = $cierreInstante;
+
+    comprobar(
+        $cierre->puedeCerrar($id),
+        'Una campana activa se puede cerrar'
+    );
+
+    $resultado = $cierre->cerrar($id, $instante, null);
+
+    comprobarIgual(
+        \App\Models\Promocion::ESTADO_FINALIZADA,
+        $resultado['estado'],
+        'El cierre devuelve la campana ya finalizada'
+    );
+    comprobarIgual(1, (int) $resultado['unidades_no_entregadas'], 'El cierre dice que solo se ha quedado sin entregar una unidad');
+    comprobarIgual(1, (int) $resultado['unidades_pendientes'], 'Y dice que antes del cierre quedaba una unidad viva');
+
+    $campana = (new \App\Models\Promocion())->exigirPorId($id);
+    comprobarIgual(\App\Models\Promocion::ESTADO_FINALIZADA, $campana['estado'], 'La campana esta finalizada de verdad en la base de datos');
+    comprobarIgual($instante, (string) $campana['cerrada_en'], 'Y tiene escrita la hora del cierre, no la hora de ahora');
+
+    $estados = $unidades->contarPorEstado($id);
+    comprobarIgual(1, (int) ($estados[\App\Models\UnidadPremio::ESTADO_ENTREGADA] ?? 0), 'La unidad ya entregada sigue entregada despues del cierre');
+    comprobarIgual(1, (int) ($estados[\App\Models\UnidadPremio::ESTADO_NO_ENTREGADA] ?? 0), 'La unidad programada ha pasado a no entregada');
+    comprobarIgual(0, (int) ($estados[\App\Models\UnidadPremio::ESTADO_PROGRAMADA] ?? 0), 'No queda ninguna unidad programada');
+
+    // La unidad entregada tiene que conservar su codigo y su participacion. Es lo
+    // que permite resolver una reclamacion semanas despues, y un cierre que lo
+    // limpiara dejaria el premio entregado sin dueno.
+    $guardada = $unidades->buscarPorId($ids[0]);
+    comprobarIgual($codigo, (string) ($guardada['codigo_reclamacion'] ?? ''), 'El codigo de reclamacion de la unidad entregada sobrevive al cierre');
+    comprobarIgual($participacionId, (int) ($guardada['participacion_id'] ?? 0), 'Y la participacion que se llevo el premio tambien');
+
+    // ---- Y queda escrito --------------------------------------------------
+    $lineas = (new \App\Models\Auditoria())->listarPorCampana($id, 50);
+    $cierres = array_values(array_filter(
+        $lineas,
+        static fn (array $l): bool => (string) $l['accion'] === \App\Models\Auditoria::ACCION_CIERRE
+    ));
+
+    comprobarIgual(1, count($cierres), 'El cierre ha dejado exactamente una anotacion de auditoria');
+
+    if ($cierres !== []) {
+        $despues = json_decode((string) $cierres[0]['datos_despues'], true);
+
+        comprobarIgual(
+            1,
+            (int) ($despues['unidades_no_entregadas'] ?? 0),
+            'La anotacion dice cuantas unidades se han quedado sin entregar'
+        );
+        comprobarIgual(
+            \App\Models\Promocion::ESTADO_FINALIZADA,
+            (string) ($despues['estado'] ?? ''),
+            'Y con que estado ha quedado la campana'
+        );
+
+        $antes = json_decode((string) $cierres[0]['datos_antes'], true);
+        comprobarIgual(
+            \App\Models\Promocion::ESTADO_ACTIVA,
+            (string) ($antes['estado'] ?? ''),
+            'Y tambien guarda el estado que tenia antes'
+        );
+    }
+
+    // ---- Cerrar dos veces no rompe nada ------------------------------------
+    comprobarFalla(
+        \App\Core\ErrorAplicacion::class,
+        static fn () => $cierre->cerrar($id, '2026-03-16 21:00:00', null),
+        'Una campana ya cerrada no se puede volver a cerrar'
+    );
+
+    limpiarPeticion();
+
+    comprobar(
+        !$cierre->puedeCerrar($id),
+        'Y la ficha ya no la ofrece como cerrable'
+    );
+
+    $lineas = (new \App\Models\Auditoria())->listarPorCampana($id, 50);
+    $cierres = array_values(array_filter(
+        $lineas,
+        static fn (array $l): bool => (string) $l['accion'] === \App\Models\Auditoria::ACCION_CIERRE
+    ));
+
+    comprobarIgual(1, count($cierres), 'El segundo intento no ha escrito una segunda anotacion');
+
+    comprobarIgual(
+        $instante,
+        (string) ((new \App\Models\Promocion())->exigirPorId($id))['cerrada_en'],
+        'Ni ha movido la hora de cierre a la del segundo intento'
+    );
+
+    // ---- Y por la pantalla, que es como lo va a usar la gente ---------------
+    $html = htmlDeAccion('ControladorSeguimiento', 'panel', ['id' => $id]);
+    comprobarNoContiene($html, 'Notice:', 'El panel de una campana cerrada se pinta sin avisos de PHP');
+    comprobarContiene($html, 'Esta campana no esta activa', 'El panel avisa de que ya no se puede cerrar');
+
+    // Se busca la accion del formulario y no el texto del boton, porque el titulo
+    // de la seccion tambien dice «Cerrar la campana» y una comprobacion por texto
+    // pasaria aunque el boton estuviese escondido: es el fallo clasico de
+    // comprobar en un panel por una palabra que aparece en varios sitios.
+    comprobarNoContiene(
+        $html,
+        '/seguimiento/cerrar',
+        'Y no ofrece el formulario de cierre'
+    );
+
+    limpiarPeticion();
+    borrarEscenarioDePanel($id);
+}
+
+/**
+ * Caso 15: el panel de seguimiento enseña las cifras y filtra lo que se le pide.
+ *
+ * ============================================================================
+ * QUE COMPRUEBA Y POR QUE
+ * ============================================================================
+ *
+ * El apartado 8 pide nueve cosas en una pantalla y tres filtros. Lo que se
+ * comprueba aqui no es que la pantalla se pinte, que es lo facil, sino que las
+ * cifras sean las de esta campana y no las de otra, que los tres filtros
+ * aprieten de verdad, y que una fecha que no es una fecha no rompa la pantalla.
+ *
+ * El ultimo punto es el que mas veces falla en un panel con filtros. Un filtro de
+ * fecha que se pasa tal cual a la consulta produce un error de MySQL —o peor, un
+ * error de PHP— cuando alguien escribe «ayer» en el campo, y en un supermercado
+ * eso significa una pantalla en blanco mientras el administrador espera. Aqui se
+ * comprueba que una fecha imposible se ignora y se muestra todo, que es lo que
+ * espera quien se equivoca al escribir.
+ *
+ * Tambien se comprueba la auditoria de la D18: que mirar el panel escriba una
+ * fila con quien ha mirado, con que filtro y cuantas filas, y que la pantalla
+ * cuente esa propia fila en su historial.
+ *
+ * @return void
+ */
+function caso15(): void
+{
+    echo 'Caso 15: el panel de seguimiento enseña las cifras y filtra', PHP_EOL;
+
+    $db = Aplicacion::db();
+    $escenario = crearEscenarioDePanel(['premios' => 2, 'tramos' => 2]);
+    $id = (int) $escenario['promocion'];
+    $tramos = $escenario['tramos'];
+    $tipos = $escenario['tipos'];
+
+    (new \App\Services\Calendario())->generar($id);
+    (new \App\Services\ConfiguracionPromocion())->activar($id);
+    limpiarPeticion();
+
+    $unidades = new \App\Models\UnidadPremio();
+
+    // Dos premios por dos tramos dan ocho unidades. Se toma como referencia un
+    // instante posterior a la generacion, para que «pendientes» tenga sentido y
+    // no dependa de la hora a la que se este ejecutando la suite.
+    //
+    // La fecha NO se escribe a mano: el escenario de pruebas crea los tramos con
+    // la fecha de hoy, porque «hoy» es lo unico que esta dentro del horario que
+    // ha puesto el generador. Si aqui se escribiera una fecha fija, el caso
+    // pasaria un dia y fallaria otro, y solo por la fecha: es exactamente el tipo
+    // de prueba que parece solida y no lo es. Se lee la del tramo y se construye
+    // el instante a partir de ella.
+    $tramo = (new \App\Models\Tramo())->exigirPorId((int) $tramos[0], '', $id);
+    $fechaEscenario = (string) $tramo['fecha'];
+    $momento = $fechaEscenario . ' 23:30:00';
+
+    // ---- Una unidad entregada, para que la lista de entregas no este vacia ---
+    $ids = array_map(
+        static fn (array $f): int => (int) $f['id'],
+        $unidades->listarParaCalendario($id, [], 20)
+    );
+    comprobarIgual(8, count($ids), 'El escenario ha repartido ocho unidades');
+
+    $participacionId = $db->insertar(
+        'INSERT INTO participaciones (
+             promocion_id, tramo_id, clave_idempotencia, momento, resultado, datos, es_simulacion, creado_en
+         ) VALUES (?, ?, ?, ?, ?, ?, 0, ?)',
+        [
+            $id,
+            (int) $tramos[0],
+            claveDePrueba('caso15-ganadora'),
+            '2026-03-15 10:12:00',
+            \App\Models\Participacion::RESULTADO_PREMIO,
+            '{"dni":"87654321X"}',
+            '2026-03-15 10:12:00',
+        ]
+    );
+
+    $unidades->entregar(
+        $ids[0],
+        $participacionId,
+        '2026-03-15 10:19:00',
+        $unidades->generarCodigoReclamacion()
+    );
+
+    $seguimiento = new \App\Services\Seguimiento();
+    $panel = $seguimiento->panel($id, [], $momento);
+
+    // ---- Las cifras de arriba ---------------------------------------------
+    comprobarIgual(8, (int) $panel['unidades']['total'], 'El panel cuenta las ocho unidades del plan');
+    comprobarIgual(1, (int) $panel['unidades']['entregadas'], 'Y sabe que una se ha entregado');
+    comprobarIgual(7, (int) $panel['unidades']['programadas'], 'Y que las otras siete siguen programadas');
+    comprobarIgual(0, (int) $panel['unidades']['no_entregadas'], 'Ninguna se ha quedado sin entregar todavia');
+    comprobarIgual(1, (int) $panel['participaciones']['total'], 'Cuenta la participacion valida');
+    comprobarIgual(1, (int) $panel['participaciones']['con_premio'], 'Y la cuenta como con premio');
+
+    // «Pendientes» son las programadas cuya hora ya ha llegado, no las que faltan
+    // por entregar. Con un instante posterior a la generacion, las ocho cumplen
+    // eso, y el caso distingue los dos numeros.
+    comprobarIgual(
+        7,
+        (int) $panel['unidades']['pendientes'],
+        'Las siete programadas ya disponibles cuentan como pendientes'
+    );
+
+    comprobarIgual(8, (int) $panel['listado']['total_unidades'], 'El listado sin filtros trae las ocho unidades');
+    comprobarIgual(1, (int) $panel['listado']['total_adjudicadas'], 'Y de las entregas solo hay una');
+
+    // ---- Las dos horas, que es lo que pide el apartado 8 --------------------
+    comprobarIgual(1, count($panel['listado']['adjudicadas']), 'La lista de premios entregados trae esa unidad');
+
+    if ($panel['listado']['adjudicadas'] !== []) {
+        $entrega = $panel['listado']['adjudicadas'][0];
+
+        comprobar(
+            (string) $entrega['inicio'] !== '',
+            'La entrega trae la hora prevista del premio'
+        );
+        comprobarIgual(
+            '2026-03-15 10:19:00',
+            (string) $entrega['adjudicada_en'],
+            'Y trae la hora real a la que se entrego'
+        );
+        comprobar(
+            isset($entrega['retraso_minutos']),
+            'Y el numero de minutos de espera entre las dos horas'
+        );
+    }
+
+    // ---- Los tres filtros del apartado 8 -----------------------------------
+    $porTramo = $seguimiento->panel($id, ['tramo_id' => (int) $tramos[0]], $momento);
+    comprobarIgual(
+        4,
+        (int) $porTramo['listado']['total_unidades'],
+        'Filtrar por un tramo de dos deja las cuatro unidades de ese tramo'
+    );
+    comprobar(
+        count($porTramo['listado']['unidades']) === 4,
+        'Y el listado trae esas mismas cuatro filas'
+    );
+
+    // El filtro acota el listado, no los totales de arriba. Es la distincion que
+    // mas confunde a quien mira la pantalla: las cifras grandes son de toda la
+    // campana, y el filtro solo acts sobre las filas.
+    comprobarIgual(
+        8,
+        (int) $porTramo['unidades']['total'],
+        'El filtro por tramo no cambia los totales de la campana'
+    );
+
+    $porPremio = $seguimiento->panel($id, ['tipo_premio_id' => (int) $tipos[0]], $momento);
+    comprobarIgual(
+        4,
+        (int) $porPremio['listado']['total_unidades'],
+        'Filtrar por un tipo de premio deja las cuatro unidades de ese premio'
+    );
+
+    $porFecha = $seguimiento->panel($id, ['fecha' => $fechaEscenario], $momento);
+    comprobarIgual(
+        8,
+        (int) $porFecha['listado']['total_unidades'],
+        'Filtrar por la fecha del escenario deja las ocho unidades'
+    );
+
+    $otraFecha = $seguimiento->panel($id, ['fecha' => '2020-01-01'], $momento);
+    comprobarIgual(
+        0,
+        (int) $otraFecha['listado']['total_unidades'],
+        'Filtrar por una fecha en la que no hay nada deja el listado vacio'
+    );
+
+    // ---- Una fecha que no es una fecha no rompe nada -----------------------
+    foreach (['2026-13-45', 'ayer', '', '15/03/2026'] as $mala) {
+        $invalida = $seguimiento->panel($id, ['fecha' => $mala], $momento);
+
+        comprobar(
+            !isset($invalida['filtros']['fecha']),
+            'Una fecha que no es una fecha se ignora en vez de mandarse a la consulta: ' . $mala
+        );
+        comprobarIgual(
+            8,
+            (int) $invalida['listado']['total_unidades'],
+            'Y con esa fecha mal escrita se ve la campana entera: ' . $mala
+        );
+    }
+
+    // Un filtro con nombre inventado tambien se ignora, en lugar de llegar a la
+    // consulta como si fuera un nombre de columna.
+    $inventado = $seguimiento->panel($id, ['columna_secreta' => 'x'], $momento);
+    comprobarIgual(
+        8,
+        (int) $inventado['listado']['total_unidades'],
+        'Un filtro con un nombre que no existe se ignora y no ensucia la consulta'
+    );
+
+    // ---- La auditoria de la D18 --------------------------------------------
+    $antes = (new \App\Models\Auditoria())->contarPorAccion($id);
+
+    $visita = $seguimiento->anotarVisita(
+        $id,
+        ['fecha' => $fechaEscenario, 'tramo_id' => (int) $tramos[0], 'tipo_premio_id' => (int) $tipos[0]],
+        4,
+        null
+    );
+
+    comprobar($visita > 0, 'Mirar el panel escribe una anotacion de auditoria');
+
+    $despues = (new \App\Models\Auditoria())->contarPorAccion($id);
+    comprobarIgual(
+        (int) (($antes[\App\Models\Auditoria::ACCION_VISUALIZACION] ?? 0) + 1),
+        (int) ($despues[\App\Models\Auditoria::ACCION_VISUALIZACION] ?? 0),
+        'Y el recuento de visualizaciones sube en uno'
+    );
+
+    $linea = $db->uno(
+        'SELECT usuario_nombre, entidad, accion, filtros, filas_mostradas
+           FROM auditoria WHERE id = ? LIMIT 1',
+        [$visita]
+    );
+
+    comprobarIgual('seguimiento', (string) ($linea['entidad'] ?? ''), 'La anotacion dice de que pantalla es');
+    comprobarIgual(
+        \App\Models\Auditoria::ACCION_VISUALIZACION,
+        (string) ($linea['accion'] ?? ''),
+        'Y que ha sido una visualizacion, no un cambio'
+    );
+    comprobar(
+        str_contains((string) ($linea['filtros'] ?? ''), 'tramo ' . (int) $tramos[0]),
+        'Y guarda que filtro se estaba usando',
+        'filtros: ' . (string) ($linea['filtros'] ?? '')
+    );
+    comprobarIgual(4, (int) ($linea['filas_mostradas'] ?? 0), 'Y cuantas filas ha visto');
+
+    // ---- Y la pantalla sale ------------------------------------------------
+    $html = htmlDeAccion('ControladorSeguimiento', 'panel', ['id' => $id]);
+    comprobarNoContiene($html, 'Notice:', 'El panel se pinta sin avisos de PHP');
+    comprobarNoContiene($html, 'Warning:', 'ni avisos de tipo Warning');
+    comprobarContiene($html, 'Como va la campana', 'Enseña las cifras de la campana');
+    comprobarContiene($html, 'Historial de auditoria', 'Enseña el historial de auditoria');
+    comprobarContiene(
+        $html,
+        '/seguimiento/cerrar',
+        'Enseña el formulario de cierre, porque la campana esta activa'
+    );
+
+    // El filtro llega a la vista por la URL y la vista lo pinta marcado. Se
+    // comprueba el valor, no solo que el campo exista, porque un desplegable que
+    // no recuerda lo que se eligio es la forma de que alguien filtre dos veces sin
+    // querer y no llegue a ver nada.
+    //
+    // El filtro se pone en $_GET a mano y no en los parametros de la ruta, porque
+    // asignarParametros() solo rellena los marcadores del patron —el «id»— y los
+    // filtros de la URL los lee el controlador de $_GET, como los leeria el
+    // navegador. Pasarlos por ahi haria que esta comprobacion no probara nada: la
+    // pantalla saldria sin filtro y el filtro se perderia en silencio.
+    limpiarPeticion();
+    $_GET['tramo'] = (string) (int) $tramos[1];
+    $htmlConFiltro = htmlDeAccion('ControladorSeguimiento', 'panel', ['id' => $id]);
+
+    comprobar(
+        preg_match('/<option value="' . (int) $tramos[1] . '"\s+selected/', $htmlConFiltro) === 1,
+        'El desplegable de tramos recuerda el tramo que se ha filtrado'
+    );
+    comprobarContiene(
+        $htmlConFiltro,
+        'con el filtro puesto',
+        'Y la pantalla avisa de que el listado va filtrado'
+    );
+    comprobarContiene(
+        $htmlConFiltro,
+        'Quitar filtros',
+        'Y ofrece quitar el filtro, que solo tiene sentido si hay uno'
+    );
+
+    // ---- El campo de fecha empieza vacio -----------------------------------
+    // El listado se pinta entero y sin filtrar, asi que el campo de fecha tiene
+    // que estar vacio. Ponerle la fecha de hoy «ayudaria», pero estaria mintiendo:
+    // quien mirase el campo creeria que hay un filtro puesto, y al pulsar
+    // «Aplicar» se quedaria viendo un listado filtrado sin haberlo pedido.
+    comprobar(
+        preg_match('/<input[^>]*name="fecha"[^>]*value=""\s*>/', $html) === 1
+        || preg_match('/<input[^>]*value=""\s*[^>]*name="fecha"/', $html) === 1,
+        'El campo de fecha se pinta vacio cuando no hay filtro'
+    );
+
+    // ---- Y el calendario que ya no cuadra con el plan ----------------------
+    // El apartado 8 pide que el panel enseñe las diferencias detectadas al
+    // modificar el calendario. Aqui no hay ninguna, y es lo correcto: el
+    // generador reparte segun el plan, de modo que un plan de dos unidades por
+    // premio y tramo produce exactamente ese calendario. Comprobar que aqui no
+    // hay aviso cuando no lo hay seria la mitad del trabajo.
+    //
+    // La diferencia se provoca a mano, y de la manera mas parecida a la que pasa
+    // en una campana de verdad: se toca el plan despues de generar. Si en vez de
+    // eso se escribieran unidades sueltas a mano, la comparacion tambien saltaria
+    // pero por un motivo distinto —un calendario editado a pelo— y la prueba
+    // estaria comprobando otra cosa. Subir la cantidad del plan deja el
+    // calendario intacto, que es lo que se ve a mitad de campana.
+    comprobarIgual(
+        [],
+        $panel['comparacion'],
+        'Con el calendario recien generado no hay diferencias que avisar'
+    );
+
+    $db->ejecutar(
+        'UPDATE asignaciones_tramo
+            SET cantidad = cantidad + 1
+          WHERE tramo_id = ? AND tipo_premio_id = ?',
+        [(int) $tramos[0], (int) $tipos[0]]
+    );
+
+    $desajustado = $seguimiento->panel($id, [], $momento);
+
+    comprobar(
+        $desajustado['comparacion'] !== [],
+        'En cuanto el plan ya no cuadra, el panel avisa'
+    );
+
+    comprobarIgual(
+        1,
+        count($desajustado['comparacion']),
+        'Y avisa solo de la pareja que se ha tocado, no de todas'
+    );
+
+    comprobar(
+        (bool) $desajustado['comparacion'][0]['cambia'],
+        'La fila que avisa viene marcada como desajustada'
+    );
+    comprobarIgual(
+        1,
+        (int) $desajustado['comparacion'][0]['faltan'],
+        'Y dice que falta una unidad, que es lo que se ha pedido de mas'
+    );
+    comprobar(
+        (string) $desajustado['comparacion'][0]['tramo_nombre'] !== ''
+        && (string) $desajustado['comparacion'][0]['tipo_nombre'] !== '',
+        'Con nombre de tramo y de premio, que si no el aviso no dice de quien'
+    );
+
+    limpiarPeticion();
+    $html = htmlDeAccion('ControladorSeguimiento', 'panel', ['id' => $id]);
+    comprobarContiene(
+        $html,
+        'El calendario ya no es el que se planeo',
+        'Y la pantalla enseña la tabla de diferencias'
+    );
+    comprobarContiene(
+        $html,
+        'faltan',
+        'Diciendo cuantas unidades faltan'
+    );
+
+    limpiarPeticion();
+    borrarEscenarioDePanel($id);
+}
+
+/**
  * Lista de casos disponibles, indexada por numero.
  *
  * @var array<int, callable():void>
@@ -2974,6 +3531,8 @@ const PRUEBAS = [
     11 => 'caso11',
     12 => 'caso12',
     13 => 'caso13',
+    14 => 'caso14',
+    15 => 'caso15',
 ];
 
 // -----------------------------------------------------------------------------

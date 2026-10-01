@@ -1,0 +1,63 @@
+-- ============================================================================
+-- 0001_auditoria_filtros
+-- ============================================================================
+-- Anade a la tabla de auditoria las dos columnas que necesita la decision D18
+-- para las vistas de lista del panel de seguimiento.
+--
+-- ============================================================================
+-- POR QUE HACE FALTA UNA MIGRACION Y NO BASTA CON TOCAR EL ESQUEMA
+-- ============================================================================
+-- sql/schema.sql solo se aplica entero, y solo en una instalacion desde cero. Una
+-- campana que ya esta en marcha tiene datos: su calendario, sus participaciones y
+-- el historial de su auditoria. Recrear la base para anadir dos columnas
+-- perderia todo eso, que es justo lo que dice el esquema al final, al explicar
+-- para que existe la tabla de migraciones.
+--
+-- Por eso este fichero solo anade columnas. No hay DROP, ni TRUNCATE, ni ninguna
+-- sentencia que borre datos, y por eso se puede aplicar sobre una campana en
+-- marcha sin parar el servicio.
+--
+-- ============================================================================
+-- POR QUE LAS COLUMNAS PONEN «IF NOT EXISTS»
+-- ============================================================================
+-- Esta es la parte que hace que el instalador aguante una instalacion desde cero,
+-- y el motivo no es obvio. El instalador hace dos cosas, en este orden:
+--
+--   1. aplica sql/schema.sql entero, y el esquema ya trae las dos columnas;
+--   2. aplica despues todas las migraciones que queden pendientes.
+--
+-- En una base ya montada el paso 2 no hace nada con este fichero, porque la tabla
+-- «migraciones» recuerda que 0001 ya se aplico. En una base nueva, en cambio, el
+-- paso 1 crea la tabla de auditoria ya con «filtros» y «filas_mostradas», y el
+-- paso 2 se encuentra con que este ALTER anade columnas que existen. Sin el
+-- «IF NOT EXISTS» la instalacion desde cero peta con «columna duplicada», que es
+-- el peor sitio posible para descubrirlo: recien comprada, sin datos, sin nada que
+-- perder, y con la sensacion de que el instalador esta roto.
+--
+-- El esquema y las migraciones cuentan la misma historia a dos Readers: el
+-- esquema para quien empieza de cero, y la migracion para quien ya tiene una
+-- campana en marcha. Que los dos digan lo mismo no es redundancia, es el
+-- requisito para que la instalacion funcione en los dos casos.
+--
+-- El ALTER sigue sin DROP, sin TRUNCATE y sin tocar datos, asi que se puede
+-- aplicar sobre una campana en marcha sin parar el servicio.
+--
+-- ============================================================================
+-- POR QUE COLUMNAS PROPIAS Y NO datos_antes O datos_despues
+-- ============================================================================
+-- El esquema reserva datos_antes y datos_despues para los cambios de
+-- configuracion, y asi lo dice el comentario de la tabla. El filtro con el que
+-- el administrador ha mirado una lista y el numero de filas que ha visto no son
+-- un cambio de configuracion: no se pueden deshacer y no describen el estado de
+-- un objeto. Ademas, meterlos en un documento JSON obligaria a ir por ellos con
+-- funciones de MySQL cada vez que el panel los quiere consultar, cuando la
+-- intencion es precisamente no pedirlos a la base de datos.
+--
+-- Las dos columnas se rellenan solo en las filas de tipo visualizacion, y se
+-- quedan a null en las de configuracion y en las de cierre, donde no tienen
+-- sentido. Por eso no tienen valor por defecto.
+-- ----------------------------------------------------------------------------
+
+ALTER TABLE auditoria
+    ADD COLUMN IF NOT EXISTS filtros VARCHAR(255) NULL AFTER ip,
+    ADD COLUMN IF NOT EXISTS filas_mostradas INT UNSIGNED NULL AFTER filtros;

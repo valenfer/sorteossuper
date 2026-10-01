@@ -111,6 +111,55 @@ class Tramo extends Modelo
     }
 
     /**
+     * Devuelve el tramo en el que esta la campana en un instante dado.
+     *
+     * ============================================================================
+     * POR QUE NO SE GUARDA UN «TRAMO ACTUAL» EN LA BASE DE DATOS
+     * ============================================================================
+     *
+     * Se podria resolver con una columna que dijera en que tramo va la campana, y
+     * habria que actualizarla cada vez que avanzase el reloj. No se hace. Un tramo
+     * guardado tendria que reescribirse en cada participacion para llevar la
+     * cuenta de un dato que se deduce del reloj, y ademas podria quedarse
+     * desactualizado: si alguien cambia el calendario o se para el reloj de la
+     * tienda, la columna diria un tramo y la campana estaria en otro. Consultarlo
+     * es mas barato que mantenerlo, y no puede mentir.
+     *
+     * La comparacion se hace en SQL y no con filtros de PHP por una razon concreta:
+     * los tramos de una campana son pocos, pero la fecha y la hora son cadenas, y
+     * comparar «A-n-j» con «A-n-j H:i:s» en PHP exigiria un monton de casos
+     * especiales que en SQL son una comparacion de columnas. Se apoya en el indice
+     * ix_tramos_busqueda, de modo que el coste es el mismo que el de leer un tramo.
+     *
+     * El criterio es el mismo que usa el motor para admitir una participacion: la
+     * hora de inicio entra, la de fin no. Con «hora_fin >» un tramo termina a las
+     * 14:00 y a las 14:00 ya no esta dentro, que es lo que espera cualquiera que
+     * mire el panel.
+     *
+     * @param int    $promocionId Campana que se quiere consultar.
+     * @param string $momento     Instante de referencia, en «A-n-j H:i:s».
+     *
+     * @return array<string, mixed>|null El tramo en curso, o null si en ese
+     *                                   instante la campana esta fuera de horario.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function actualEn(int $promocionId, string $momento): ?array
+    {
+        return $this->db->uno(
+            'SELECT id, fecha, hora_inicio, hora_fin
+               FROM tramos
+              WHERE promocion_id = ?
+                AND fecha = DATE(?)
+                AND hora_inicio <= TIME(?)
+                AND hora_fin > TIME(?)
+              ORDER BY hora_inicio ASC
+              LIMIT 1',
+            [$promocionId, $momento, $momento, $momento]
+        );
+    }
+
+    /**
      * Devuelve un tramo en una linea que se pueda leer sin mirar las columnas.
      *
      * Los tramos no tienen columna «nombre»: se distinguen por el dia y la hora,

@@ -426,15 +426,25 @@ function borrarEscenarioDePanel(int $promocionId): void
         [$promocionId]
     );
 
+    // El orden lo manda la base de datos, no la comodidad. Todo lo que tiene una
+    // clave foranea a tramos tiene que irse antes que tramos: las participaciones
+    // guardan en que tramo se registro, y los intentos rechazados tambien. Borrar
+    // tramos antes que ellas deja filas apuntando a un tramo que ya no existe, y
+    // MariaDB se niega con un error de integridad en vez de dejar el rastro.
+    //
+    // Por eso la lista esta en orden de dependencia decreciente y no agrupada por
+    // parecido. Cualquier fila nueva que cuelgue de campana o de tramo tiene que
+    // anadirse aqui por arriba, o el fallo aparecera como un error de base de datos
+    // al final de un caso que en realidad habia pasado todo.
     $tablas = [
         'unidades_premio'      => 'promocion_id',
-        'tramos'              => 'promocion_id',
+        'correos'             => 'promocion_id',
+        'intentos_rechazados' => 'promocion_id',
+        'participaciones'     => 'promocion_id',
         'campos_formulario'   => 'promocion_id',
         'reglas_participacion' => 'promocion_id',
         'configuracion_visual' => 'promocion_id',
-        'correos'             => 'promocion_id',
-        'participaciones'     => 'promocion_id',
-        'intentos_rechazados' => 'promocion_id',
+        'tramos'              => 'promocion_id',
         'tipos_premio'        => 'promocion_id',
         // La campana se borra por su propia clave, que no se llama igual que la
         // de las demas. Por eso la columna va escrita al lado en vez de deducirse.

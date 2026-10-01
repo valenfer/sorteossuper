@@ -831,6 +831,17 @@ CREATE TABLE IF NOT EXISTS auditoria (
     datos_despues  LONGTEXT     NULL,
     ip             VARCHAR(45)  NOT NULL DEFAULT '',
 
+    -- Decision D18 aplicada a las vistas de lista del panel. datos_antes y
+    -- datos_despues estan reservados a cambios de configuracion, y el filtro de
+    -- una consulta y el numero de filas que ha visto el administrador no son
+    -- ninguna de las dos cosas: no se pueden deshacer y no describen el estado
+    -- de un objeto. Van en columnas propias para que el panel pueda responder
+    -- «¿quien ha mirado esto y con que filtro?» sin tener que interpretar un
+    -- documento JSON, y para que un filtro muy largo no se tenga que recortar
+    -- para que quepa en datos_despues.
+    filtros        VARCHAR(255) NULL,
+    filas_mostradas INT UNSIGNED NULL,
+
     creado_en      DATETIME NOT NULL,
 
     PRIMARY KEY (id),

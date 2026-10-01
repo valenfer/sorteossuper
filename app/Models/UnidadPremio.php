@@ -496,6 +496,159 @@ class UnidadPremio extends Modelo
     }
 
     /**
+     * Lista los premios ya adjudicados de una campana, con su hora real.
+     *
+     * ============================================================================
+     * POR QUE ESTA CONSULTA TRAE LAS DOS HORAS
+     * ============================================================================
+     *
+     * Porque son las dos que se guardan y no se pueden recuperar una de la otra. En
+     * inicio esta la hora en que el premio estaba previsto, que es una decision del
+     * administrador; en adjudicada_en esta la hora en que se entrego de verdad, que
+     * depende de cuando llego la siguiente participacion valida. En una campana que
+     * funciona bien casi coinciden, y por eso puede parecer redundante guardarlas.
+     *
+     * Se juntas porque el apartado 8 pide expressly los «premios adjudicados con su
+     * hora real», y esa pregunta no tiene respuesta sin las dos: si solo saliera
+     * adjudicada_en, el administrador veria que un premio se entrego a las 11:20 sin
+     * poder saber si estaba previsto a las 11:20 o si llevaba una hora de retraso. Y
+     * el retraso es justo el sintoma que sirve para detectar que la campana va
+     * justa: si se acumulan minutos de espera, o no hay azafatas o la hora punta
+     * se ha llenado de participaciones.
+     *
+     * La diferencia se calcula en SQL con TIMESTAMPDIFF y se devuelve en minutos,
+     * que es como la piensa quien mira la pantalla. El dato tambien se podria
+     * calcular en PHP al pintar, pero entonces cada fila seria una resta de
+     * fechas en el servidor y un numero que se podria leer en pantalla, y el
+     * motor ya lo sabe hacer mejor.
+     *
+     * El ORDER BY es por adjudicada_en y no por inicio, porque lo que se mira es
+     * la secuencia real de entrega. Con el orden del calendario, que es por
+     * inicio, dos premios entregados en orden inverso aparecerian desordenados
+     * respecto a como ocurrieron.
+     *
+     * Solo se listan las unidades entregadas: una anulada o una que se cerro sin
+     * entregar no tiene hora real de adjudicacion, y meterlas aqui con la columna
+     * a NULL haria que el administrador las Sumara como si hubieran ocurrido.
+     *
+     * @param int                  $promocionId Campana que se quiere listar.
+     * @param array<string, mixed> $filtros     Filtros opcionales, con las claves
+     *                                           «tramo_id», «tipo_premio_id» y
+     *                                           «fecha». Se reaprovecha el
+     *                                           filtro del calendario para que
+     *                                           los dos listados no se separen.
+     * @param int                  $limite      Maximo de filas devueltas.
+     *
+     * @return array<int, array<string, mixed>> Filas con la hora prevista, la
+     *         hora real, los minutos de retraso, el tramo, el premio y el codigo
+     *         de reclamacion.
+     *
+     * @throws ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function listarAdjudicadas(int $promocionId, array $filtros = [], int $limite = 200): array
+    {
+        $parametros = [$promocionId, self::ESTADO_ENTREGADA];
+        $sentencia = 'SELECT u.id,
+                             u.inicio,
+                             u.adjudicada_en,
+                             u.codigo_reclamacion,
+                             TIMESTAMPDIFF(MINUTE, u.inicio, u.adjudicada_en) AS retraso_minutos,
+                             u.participacion_id,
+                             t.id AS tramo_id,
+                             t.fecha,
+                             t.hora_inicio,
+                             t.hora_fin,
+                             tp.id AS tipo_premio_id,
+                             tp.nombre AS premio
+                        FROM unidades_premio u
+                        JOIN tramos t ON t.id = u.tramo_id
+                        JOIN tipos_premio tp ON tp.id = u.tipo_premio_id
+                       WHERE u.promocion_id = ?
+                         AND u.estado = ?'
+            . $this->filtrosDeCalendario($filtros, $parametros)
+            . ' ORDER BY u.adjudicada_en DESC, u.id DESC
+                        LIMIT ?';
+
+        $parametros[] = max(1, $limite);
+
+        return $this->db->todos($sentencia, $parametros);
+    }
+
+    /**
+     * Cuenta los premios adjudicados con los mismos filtros que el listado.
+     *
+     * Va aparte, y por el mismo motivo que contarParaCalendario(): con un limite
+     * de doscientas filas, el total no se puede sacar de lo devuelto o el panel
+     * diria «200» a quien tenga mas.
+     *
+     * @param int                  $promocionId Campana que se quiere contar.
+     * @param array<string, mixed> $filtros     Filtros, con las mismas claves que
+     *                                           listarAdjudicadas().
+     *
+     * @return int Numero de premios entregados que cumplen los filtros.
+     *
+     * @throws ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function contarAdjudicadas(int $promocionId, array $filtros = []): int
+    {
+        $parametros = [$promocionId, self::ESTADO_ENTREGADA];
+
+        $sentencia = 'SELECT COUNT(*)
+                        FROM unidades_premio u
+                        JOIN tramos t ON t.id = u.tramo_id
+                       WHERE u.promocion_id = ?
+                         AND u.estado = ?'
+            . $this->filtrosDeCalendario($filtros, $parametros);
+
+        return (int) $this->db->valor($sentencia, $parametros);
+    }
+
+    /**
+     * Cuenta las unidades programadas cuya hora ya ha llegado.
+     *
+     * ============================================================================
+     * POR QUE ESTO NO ES UNA RESTA
+     * ============================================================================
+     *
+     * Se podria restar el numero de participaciones validas al total de unidades
+     * programadas, y es tentador porque son los mismos numeros que el panel ya
+     * tiene calculados. No se hace por dos razones.
+     *
+     * La primera es que no es lo mismo. Una participacion puede no haber recibido
+     * premio porque no habia unidades disponibles en ese instante, no porque su
+     * unidad siga esperando. Restar participaciones de unidades daria el numero de
+     * premios que aun no han salido, que es una cifra distinta de la que pide el
+     * apartado 8, que es la de los premios cuya hora todavia no ha llegado.
+     *
+     * La segunda es que el recuento sale de una cuenta en SQL sobre un indice, que
+     * es una sola lectura, mientras que la resta haria que el panel tuviera que
+     * mirar dos recuentos y restarlos en cada fila de la pantalla. Con una campana
+     * grande se nota.
+     *
+     * Se cuentan las que estan programadas y ya han empezado, ni siquiera las
+     * cuyas unidades siguen sin adjudicar: «premio esperando» es una promesa de la
+     * campana, y el panel debe poder contrastarla con la reality de lo entregado.
+     *
+     * @param int    $promocionId Campana que se quiere contar.
+     * @param string $momento     Instante de referencia.
+     *
+     * @return int Numero de unidades programadas cuya hora ya ha llegado.
+     *
+     * @throws ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function contarPendientes(int $promocionId, string $momento): int
+    {
+        return (int) $this->db->valor(
+            'SELECT COUNT(*)
+               FROM unidades_premio
+              WHERE promocion_id = ?
+                AND estado = ?
+                AND inicio <= ?',
+            [$promocionId, self::ESTADO_PROGRAMADA, $momento]
+        );
+    }
+
+    /**
      * Devuelve una unidad con los datos de su tramo, para editar o retirar.
      *
      * @param int $unidadId Unidad que se quiere.
@@ -702,6 +855,74 @@ class UnidadPremio extends Modelo
                     modificado_en = ?
               WHERE id = ?',
             [self::ESTADO_ANULADA, $motivo, $ahora, $unidadId]
+        );
+    }
+
+    /**
+     * Pasa a no_entregada todas las unidades programadas de una campana.
+     *
+     * Es la operacion central del cierre de una campana, y se hace de una sola
+     * sentencia y no unidad por unidad, por dos razones.
+     *
+     * La primera es que el numero de unidades de una campana de un supermercado
+     * puede ser de miles. Hacerlo fila a fila desde PHP convertiria un cierre en
+     * miles de viajes de ida y vuelta que en una tienda con una conexion lenta se
+     * notan. Una sentencia las resuelve todas dentro del motor.
+     *
+     * La segunda, y la importante, es que un UPDATE con WHERE sobre el estado no
+     * puede afectar a una unidad que no estuviera programada aunque alguien lo
+     * ejecutase dos veces. Eso hace que el cierre sea idempotente por su cuenta y
+     * que un doble clic en el boton no pueda dejar unidades entregadas marcadas
+     * como no entregadas. La condicion va en el WHERE y no se filtra en PHP por
+     * eso mismo: el filtro tiene que estar en la sentencia que decide.
+     *
+     * ============================================================================
+     * POR QUE NO SE TOCA anulada_motivo
+     * ============================================================================
+     *
+     * Porque el esquema documenta ese campo como el motivo de una anulacion, y
+     * que significa que alguien decidio retirar un premio del plan. Una unidad
+     * que se cierra sin entregar es otra cosa: estaba en el plan, llego su hora y
+     * nadie llego a reclamarlo. Poner el motivo del cierre en un campo que el
+     * panel lee como «retirada manual» haria que una retirada se confunda con un
+     * cierre al mirar el calendario, que es exactamente el fallo que el comentario
+     * de anular() quiere evitar. El motivo del cierre no se pierde: esta en la
+     * fila de auditoria del cierre, que si lo explica.
+     *
+     * ============================================================================
+     * POR QUE NO SE ADJUDICA NADA AL CERRAR
+     * ============================================================================
+     *
+     * Porque el cierre no es un sorteo. Un premio que nadie ha llegado a
+     * reclamar no se le puede dar a la siguiente persona sin su participacion: eso
+     * seria inventar una adjudicacion, con un correo y un codigo de reclamacion
+     * de alguien que no existe. La decision D4 dice que la cola persiste entre
+     * tramos mientras la campana siga abierta, y al cerrarla ya no hay a quien
+     * dársela. Por eso el cierre consume las unidades, y no las reparte.
+     *
+     * @param int    $promocionId Campana que se cierra.
+     * @param string $momento     Instante del cierre, que se escribe en
+     *                            modificado_en de cada unidad.
+     *
+     * @return int Cuantas unidades han cambiado de estado, que es el numero de
+     *             premios que se han quedado sin reclamar.
+     *
+     * @throws ErrorBaseDeDatos Si la escritura falla.
+     */
+    public function noEntregarProgramadas(int $promocionId, string $momento): int
+    {
+        return $this->db->ejecutar(
+            'UPDATE unidades_premio
+                SET estado = ?,
+                    modificado_en = ?
+              WHERE promocion_id = ?
+                AND estado = ?',
+            [
+                self::ESTADO_NO_ENTREGADA,
+                $momento,
+                $promocionId,
+                self::ESTADO_PROGRAMADA,
+            ]
         );
     }
 }

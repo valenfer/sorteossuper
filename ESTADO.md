@@ -29,8 +29,8 @@ configura la promoción y el personal de tienda registra las participaciones.
 | 3. Configuración de la promoción | Terminado | `9de72c6` | Panel del administrador: días, tramos, tipos de premio, cantidades, calendario. |
 | 4. Participaciones y resultados | Terminado | `0505a60` | Registro por la azafata, reglas, identidad, las dos pantallas. |
 | 5. Correo | Terminado | `550eaa8` | Transporte `log` y `smtp`, cola de mensajes, reintentos, worker. |
-| 6. Panel de seguimiento | Pendiente | — | Métricas, filtros, auditoría, cierre de promoción. |
-| 7. Scripts de línea de comandos | Parcial | — | El worker del correo está; la purga de datos por retención no. |
+| 6. Panel de seguimiento | Terminado | `53f90be` | Métricas, filtros, auditoría, cierre de promoción. |
+| 7. Scripts de línea de comandos | Terminado | `51fec02` | El worker del correo y el purgador de datos por retención. |
 
 **El orden importa.** El hito 2 va antes que el 3 y el 4 a propósito: es el
 único punto donde un error no se ve en la pantalla y se manifiesta días
@@ -98,10 +98,9 @@ participaciones, la de cola de correos y la de auditoría. El modelo de datos es
 el motor que usa las cuatro tablas centrales, el panel que las configura, la
 pantalla que las usa y el worker que manda el correo.
 
-**Lo que no hay todavía.** La purga de datos por retención, y la ruleta decorativa
-del mostrador (D19), que no hace falta para que la campaña funcione y que se puede
-dejar para el final. Sigue sin haber HTTP en la prueba de concurrencia, por lo que
-se dice en la sección 4.
+**Lo que no hay todavía.** La ruleta decorativa del mostrador (D19), que no hace
+falta para que la campaña funcione y que se puede dejar para el final. Sigue sin
+haber HTTP en la prueba de concurrencia, por lo que se dice en la sección 4.
 
 **En la raíz hay un `bbdd.png` con un diagrama de la base de datos hecho a
 mano.** Se versiona desde el hito 3, con la autorización del promotor, porque es
@@ -115,30 +114,28 @@ que romper».
 Este es el resumen para retomar el trabajo. Si solo se lee una cosa de todo el
 documento, que sea esto.
 
-**Punto exacto en el que está.** Los hitos 0 a 6 están cerrados y subidos a
+**Punto exacto en el que está.** Los hitos 0 a 7 están cerrados y subidos a
 `origin/master`. No hay nada a medias: el árbol de trabajo está limpio y las tres
-comprobaciones pasan. El commit del hito 6 es `53f90be`; el que viene detrás solo
-apunta este documento a ese hash, como se hizo con el hito 5.
+comprobaciones pasan. El commit del hito 7 es `51fec02`; el que viene detrás solo
+apunta este documento a ese hash, como se hizo con los hitos 5 y 6.
 
 **Lo siguiente, por este orden.**
 
-1. **Hito 7, purga de datos.** El worker del correo ya está, así que de este hito
-   solo queda la purga por días de retención, que usa la columna
-   `promociones.retencion_dias`.
-2. **Preguntar al promotor por D4**, si se quiere el comportamiento completo. La
+1. **Preguntar al promotor por D4**, si se quiere el comportamiento completo. La
    suposición de que los premios pendientes pasan al tramo y al día siguiente sigue
    sin confirmar (sección «Riesgos y limitaciones abiertas»). El cierre la
    implementa tal cual está documentado —no reubica— y el proyecto funciona sin
-   reubicar, así que esto no bloquea el hito 7.
-3. **La ruleta de D19, si se quiere.** Decorativa, sin premios en los sectores.
+   reubicar.
+2. **La ruleta de D19, si se quiere.** Decorativa, sin premios en los sectores.
 
 **Antes de escribir código nuevo, dos avisos.**
 
-- El cierre de promoción y el panel son los primeros sitios donde una columna
-  nullable y un identificador que no existe se rompen en silencio. Los dos fallos
-  que encontró el hito 6 son el mismo: un `usuario_id` de cero y una clave de vista
-  que `extract()` no deja pasar. Los dos habrían pasado cualquier revisión de
-  lectura, y los dos los encontró la prueba, no la vista.
+- La purga vacía correos en estado «pendiente» si alguien la llama mal, y eso
+  significa que el worker manda un correo en blanco con el código de reclamación
+  perdido. La condición está dentro de `Correo::purgar()`, no en el servicio, y
+  por eso no hay ninguna forma de saltársela: si alguna vez hay que tocar esa
+  consulta, hay que tocar también la prueba del caso 16 que comprueba que el
+  pendiente sobrevive intacto.
 - Las secciones «Reglas que no hay que romper» y «Trampas conocidas» de este
   documento son las que más tiempo ahorran. La primera la hace cumplir el
   verificador; la segunda no, y por eso está aquí.
@@ -459,8 +456,8 @@ para que no haga falta releer el código.
 | 3. Panel de promociones | `9de72c6` | Cerrado |
 | 4. Participación y resultados | `0505a60`, cerrado en `550eaa8` | Cerrado |
 | 5. Correo | `550eaa8` | Cerrado |
-| 6. Panel de seguimiento | — | Pendiente |
-| 7. Purga de datos | — | Pendiente, la parte del worker está hecha |
+| 6. Panel de seguimiento | `53f90be` | Cerrado |
+| 7. Purga de datos | `51fec02` | Cerrado, el worker del correo venía del hito 5 |
 
 ### Hito 0 — Especificación (`fcf6770`)
 
@@ -769,4 +766,74 @@ pinta vacío y el filtro solo existe si alguien lo ha puesto.
 **Cómo se comprueba.** El caso 14 cubre el cierre entero, con su auditoría y con
 la pantalla. El caso 15 cubre el panel, los tres filtros, las fechas inválidas, la
 auditoría de la D18, el campo de fecha vacío y el aviso de desajuste del
-calendario. La suite son 16 casos y 371 comprobaciones.
+calendario. La suite de este hito son 16 casos y 371 comprobaciones.
+
+### Hito 7 — Purga de datos por retención (`51fec02`)
+
+**Qué hay que construir.** El trabajo de consola que vacía los datos personales de
+las campañas cuyo plazo de retención ha vencido.
+
+**Lo que hay.**
+
+- `app/Services/Purgador.php` es el servicio. `purgar()` da una pasada por las
+  campañas elegibles y `purgarCampana()` purga una sola, que es la que usa
+  `--campana=7`.
+- La regla de elegibilidad vive **una sola vez**, en
+  `Promocion::campanasParaPurgar()`: cerrada, con `retencion_dias` no nulo, y
+  `cerrada_en + INTERVAL retencion_dias DAY <= ahora`. La cuenta empieza en el
+  cierre, no en la creación ni en la participación.
+- `Promocion::exigirPurgaPermitida()` repite ese mismo filtro en SQL para el caso
+  de una campaña concreta, y **rechaza con un error que dice el motivo**: dentro de
+  plazo, sin plazo, o sin cerrar. Comprobar después de vaciar sería una puerta
+  abierta: `--campana` equivocado borraría una campaña que aún está dentro de su
+  plazo, y una purga no se puede deshacer.
+- Se **vacían tres tablas**, no dos: `participaciones` (`datos` queda en `{}` por el
+  `NOT NULL` y el `CHECK JSON_VALID`, `datos_normalizados` y `clave_unicidad` a
+  `NULL`), `correos` (`destinatario` y `cuerpo` a cadena vacía, `variables` a
+  `NULL`) e `intentos_rechazados` (`clave_identidad` a `NULL`). La tercera no tiene
+  datos personales en el sentido estricto, pero guarda un HMAC de la identidad, y
+  mientras la campaña lo conserve no es cierto que sus datos estén borrados.
+- Las **filas no se borran**. Se quedan con lo que describe el sorteo —momento,
+  tramo, resultado, transporte, estado, intentos, motivo del fallo— y pierden lo
+  que identifica a una persona. Es la diferencia entre «no saber quién ganó» y «no
+  saber que se entregó un premio».
+- Los correos `pendiente` y `enviando` **no se purgan**. Vaciarlos dejaría al worker
+  un mensaje sin cuerpo y sin destinatario, que saldría y se llevaría por delante el
+  código de reclamación. La condición está en la consulta de `Correo::purgar()`, no
+  en el servicio, para que no haya camino que la esquive.
+- Todo en una transacción y con `bloquearPromocion()` primero, igual que el cierre.
+  Un fallo a la mitad dejaría participaciones sin datos pero correos con el nombre
+  dentro, y eso no se puede arreglar después.
+- Un solo asiento de auditoría por campaña, con los tres recuentos en
+  `datos_despues`. Veinte mil participaciones serían veinte mil asientos ilegibles.
+- `intentos_rechazados` **no lleva `purgada_en`**: vaciarla es su propia marca
+  (`clave_identidad IS NOT NULL`). Se paga con no poder decir qué día se purgó, y se
+  acepta para no añadir una columna que solo serviría para eso.
+- `bin/purgar_datos.php` **simula por defecto**. Hay que escribir `--real` para
+  purgar de verdad, al revés de lo normal y a propósito: la operación es
+  irreversible y el primer trabajo de las tres de la mañana debe enseñar lo que
+  haría. Un argumento con valor por defecto copiado y pegado es el accidente más
+  probable de toda esta parte.
+
+**Lo que encontró el caso 16 al escribirse.** Al principio se comprobaba que
+`purgarCampana()` devolvía `null` cuando no purgaba, y la prueba pasaba mientras el
+código tiraba una excepción. Devolver `null` para una campaña pedida a mano era, de
+hecho, la respuesta equivocada: quien pide purgar la campaña 7 no puede saber si ya
+estaba purgada, si no tenía datos o si el guion está roto. Ahora lanza
+`ErrorAplicacion` con el motivo, y el caso comprueba que el motivo sea el correcto.
+
+**Dos avisos para quien siga.**
+
+- El plazo se cuenta desde `cerrada_en`, y `retencion_dias` en `NULL` significa «no
+  purgar nunca». Con cero días —lo que pondría el formulario si alguien deja el
+  campo vacío— se borraría todo en cuanto la campaña se cerrara. El servicio de
+  configuración trata el campo vacío como `NULL`, y esa es la línea que lo sostiene.
+- Las columnas `purgada_en` de `participaciones` y `correos`, y sus índices, están
+  en `sql/schema.sql` y en `sql/migraciones/0002_purga_datos.sql`. Por lo mismo que
+  en el hito 6, **la migración tiene que ser idempotente**: `ADD COLUMN IF NOT
+  EXISTS` y `CREATE INDEX IF NOT EXISTS` (MariaDB 10.4.32 lo acepta).
+
+**Cómo se comprueba.** El caso 16 cubre los tres rechazos (dentro de plazo, sin
+plazo, sin cerrar), la simulación sin escribir nada, el vaciado de las tres tablas,
+lo que sobrevive, el correo pendiente intacto, un único asiento de auditoría y la
+idempotencia. La suite son 17 casos y 415 comprobaciones.

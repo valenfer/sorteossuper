@@ -115,21 +115,21 @@ que romper».
 Este es el resumen para retomar el trabajo. Si solo se lee una cosa de todo el
 documento, que sea esto.
 
-**Punto exacto en el que está.** Los hitos 0 a 5 están cerrados y subidos a
-`origin/master`. El hito 6 —cierre de promoción y panel de seguimiento— está
-**escrito y verificado, pero sin commit**: las tres comprobaciones pasan y la suite
-está entera, así que lo que falta es el commit y la subida, no trabajo. Al retomar,
-mirar `git status` antes de nada: los ficheros del hito 6 están modificados y sin
-versionar.
+**Punto exacto en el que está.** Los hitos 0 a 6 están cerrados y subidos a
+`origin/master`. No hay nada a medias: el árbol de trabajo está limpio y las tres
+comprobaciones pasan. El commit del hito 6 es `53f90be`; el que viene detrás solo
+apunta este documento a ese hash, como se hizo con el hito 5.
 
 **Lo siguiente, por este orden.**
 
-1. **Cerrar el hito 6.** Commit y subida. Antes, decidir si la suposición sin
-   confirmar de D4 (abajo) se queda como está documentada o se pregunta al
-   promotor: el cierre la usa y es el único punto del proyecto donde se nota.
-2. **Hito 7, purga de datos.** El worker del correo ya está, así que de este hito
+1. **Hito 7, purga de datos.** El worker del correo ya está, así que de este hito
    solo queda la purga por días de retención, que usa la columna
    `promociones.retencion_dias`.
+2. **Preguntar al promotor por D4**, si se quiere el comportamiento completo. La
+   suposición de que los premios pendientes pasan al tramo y al día siguiente sigue
+   sin confirmar (sección «Riesgos y limitaciones abiertas»). El cierre la
+   implementa tal cual está documentado —no reubica— y el proyecto funciona sin
+   reubicar, así que esto no bloquea el hito 7.
 3. **La ruleta de D19, si se quiere.** Decorativa, sin premios en los sectores.
 
 **Antes de escribir código nuevo, dos avisos.**
@@ -143,12 +143,11 @@ versionar.
   documento son las que más tiempo ahorran. La primera la hace cumplir el
   verificador; la segunda no, y por eso está aquí.
 
-**Lo único que está decisionado pero sin hacer**, y que conviene decidir antes de
-programar: la suposición de D4 sobre la cola de premios pendientes es del
-implementador, no del promotor, y sigue sin confirmar (sección «Riesgos y
-limitaciones abiertas»). El cierre del hito 6 la implementa tal cual —las unidades
-no entregadas pasan a `no_entregada` y no se reubican— y deja el supuesto anotado
-en la respuesta del cierre, pero la decisión sigue siendo del promotor.
+**Lo que era una decisión y ya no lo es.** La suposición de D4 sobre la cola de
+premios pendientes la implementa ahora el cierre del hito 6, y lo hace como
+supuesto del implementador, no como regla del promotor. Sigue siendo de él, pero
+ya no es una pregunta que haya que hacer antes de programar: el código está escrito
+y anotado, y confirmar la decisión es cambiar una línea, no escribir el cierre.
 
 ## 4. Decisiones que condicionan el trabajo
 
@@ -695,7 +694,7 @@ reintentos, un transporte desconocido y la cola vacía.
 es del hito 7, y la ruleta decorativa de D19, que no está hecha y no es
 necesaria para que la campaña funcione.
 
-### Hito 6 — Cierre y panel de seguimiento (sin commit)
+### Hito 6 — Cierre y panel de seguimiento (`53f90be`)
 
 **Qué hay que construir.** El cierre de una promoción y la pantalla de
 seguimiento del administrador: métricas, filtros, listados y auditoría.

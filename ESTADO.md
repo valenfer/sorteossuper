@@ -116,9 +116,8 @@ documento, que sea esto.
 
 **Punto exacto en el que está.** Los hitos 0 a 7 están cerrados y subidos a
 `origin/master`, y D4 está confirmada. No hay nada a medias: el árbol de trabajo
-está limpio y las tres comprobaciones pasan. El commit del hito 7 es `51fec02`; el
-que viene detrás solo apunta este documento a ese hash, como se hizo con los hitos
-5 y 6.
+está limpio y las tres comprobaciones pasan. El commit de D4 es `dbf2fdf`, y el
+del hito 7 es `51fec02`.
 
 **Lo siguiente, por este orden.**
 

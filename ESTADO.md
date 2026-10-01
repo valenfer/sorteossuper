@@ -677,7 +677,8 @@ tenerlo, porque el siguiente que lo leyera podía dar por hecho que el
 comportamiento estaba resuelto. Si alguna vez hace falta reorganizar la cola, el
 sitio es una tabla de asignaciones con su propia fecha, no `inicio` ni `tramo_id`.
 
-**D19 — La ruleta decorativa, dentro de la pantalla de resultado.** Está hecha, en
+**D19 — La ruleta decorativa, dentro de la pantalla de resultado** (`c6e91c4`).
+Está hecha, en
 `views/participacion/resultado.php` y en `assets/css/estilos.css`. La decisión D19
 pide una ruleta «con los colores y el logotipo configurados en el panel, y sin
 nombres de premios en los sectores».

@@ -60,6 +60,7 @@ namespace App\Models;
 
 use App\Core\Aplicacion;
 use App\Core\Autorizacion;
+use App\Core\ErrorAplicacion;
 use App\Core\Modelo;
 use App\Core\NoEncontrado;
 
@@ -164,6 +165,141 @@ class Promocion extends Modelo
                 UnidadPremio::ESTADO_PROGRAMADA,
                 UnidadPremio::ESTADO_ENTREGADA,
             ]
+        );
+    }
+
+    /**
+     * Devuelve las campanas cuyos datos personales ya pueden purgarse.
+     *
+     * ============================================================================
+     * POR QUE SOLO CAMPANAS CERRADAS Y POR QUE CUENTA DESDE EL CIERRE
+     * ============================================================================
+     *
+     * Las dos condiciones del WHERE son la parte importante de este metodo, y las
+     * dos son de seguridad mas que de consulta.
+     *
+     * `cerrada_en IS NOT NULL` descarta toda campana que no este cerrada. Una
+     * campana en marcha tiene participaciones de gente que todavia puede querer
+     * mirar su resultado, y borrar el DNI de alguien que esta jugando ahora mismo
+     * no es una interpretacion de la retencion, es un fallo. La retencion se
+     * aplica a lo que ya termino, nunca a lo que sigue.
+     *
+     * `DATE_ADD(cerrada_en, INTERVAL retencion_dias DAY) <= ?` hace que la cuenta
+     * empiece al cerrarse la campana, y no al participar ni al crearse. Es lo que
+     * se le explica a la gente al pedir sus datos: «los guardamos N dias desde que
+     * termino la campana». Y tiene una consecuencia util: si alguien sube el valor
+     * de retencion porque le ha llegado una solicitud, la fecha se recalcula sola
+     * desde el cierre, sin tocar ninguna fila.
+     *
+     * `retencion_dias IS NOT NULL` es la manera de decir «sin plazo». El ajuste se
+     * guarda en NULL cuando la campana no quiere que se borre nada, y es un NULL
+     * con significado, no un cero disfrazado: con cero dias, que es lo que pone el
+     * formulario si no se rellena, se borraria todo en cuanto la campana se
+     * cerrara. Por eso el servicio de ajustes trata el campo vacio como NULL y no
+     * como cero.
+     *
+     * ============================================================================
+     * POR QUE EL PLAZO SE CALCULA EN SQL Y NO EN PHP
+     * ============================================================================
+     *
+     * Por lo mismo que el tramo actual del panel. «cerrada_en mas N dias» son dos
+     * columnas y un intervalo, y en PHP habria que traer todas las campanas
+     * cerradas a memoria para descartar despues las que todavia no cumplen el
+     * plazo. Aqui la comparacion ocurre antes de traer una sola fila.
+     *
+     * El limite entra como parametro y se convierte a entero antes de meterse en
+     * la sentencia, porque LIMIT no admite marcador de posicion en MariaDB. La
+     * conversion se hace en PHP y no con el valor crudo: es lo unico que impide
+     * que un numero llegue a la consulta sin comprobar.
+     *
+     * El filtro por identificador existe para quien pide purgar una campana
+     * concreta. Se anade a la misma sentencia y no en PHP, precisamente para que
+     * no haya dos caminos distintos hacia la misma regla.
+     *
+     * @param string   $momento    Instante de referencia, en «A-n-j H:i:s».
+     * @param int      $limite     Maximo de campanas que se devuelven.
+     * @param int|null $soloPromo  Si se indica, se mira solo esa campana.
+     *
+     * @return array<int, array<string, mixed>> Campanas con «id», «nombre»,
+     *         «cerrada_en» y «retencion_dias».
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function campanasParaPurgar(string $momento, int $limite = 50, ?int $soloPromo = null): array
+    {
+        $filtro = $soloPromo === null ? '' : ' AND id = ?';
+        $parametros = $soloPromo === null ? [$momento] : [$momento, $soloPromo];
+
+        return $this->db->todos(
+            'SELECT id, nombre, cerrada_en, retencion_dias
+               FROM promociones
+              WHERE cerrada_en IS NOT NULL
+                AND retencion_dias IS NOT NULL
+                AND DATE_ADD(cerrada_en, INTERVAL retencion_dias DAY) <= ?'
+            . $filtro
+            . ' ORDER BY cerrada_en ASC
+              LIMIT ' . (int) $limite,
+            $parametros
+        );
+    }
+
+    /**
+     * Devuelve una campana solo si ya se puede purgar, o lanza el error.
+     *
+     * ============================================================================
+     * POR QUE LA MISMA REGLA QUE `campanasParaPurgar` ESTA AQUI OTRA VEZ
+     * ============================================================================
+     *
+     * No es una copia por descuido. Es el unico sitio donde vive la regla de que
+     * una campana es purgable —cerrada, con plazo, y con el plazo vencido— y las
+     * dos consultas la repiten a proposito, en SQL y en el mismo motor:
+     *
+     *   - `campanasParaPurgar` la usa para elegir las campanas de una pasada.
+     *   - Este metodo la usa para comprobar una campana que alguien ha pedido
+     *     purgar en concreto, normalmente con «--campana=7».
+     *
+     * El caso del identificador concreto es el peligroso: es una peticion que
+     * dice «borra esta», y si la comprobacion del plazo se hiciera despues de
+     * vaciar, un argumento equivocado bastaria para borrar una campana que aun
+     * esta dentro de su plazo. La comprobacion va antes, y va en SQL, que es donde
+     * no hay conversion de tipos ni interpretaciones.
+     *
+     * Que las dos consultas repitan el filtro es lo que evita el fallo real, que
+     * es tener la regla en PHP en un sitio y en SQL en otro, y que un dia una
+     * de las dos se quede atras.
+     *
+     * @param int    $id      Campana que se quiere purgar.
+     * @param string $momento Instante de referencia, en «A-n-j H:i:s».
+     *
+     * @return array<string, mixed> La campana, si se puede purgar.
+     *
+     * @throws \App\Core\ErrorAplicacion   Si no se puede purgar, con el motivo
+     *                                     concreto en el mensaje.
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function exigirPurgaPermitida(int $id, string $momento): array
+    {
+        $campanas = $this->campanasParaPurgar($momento, 1, $id);
+
+        if ($campanas !== []) {
+            return $this->exigirPorId($id);
+        }
+
+        // No se ha encontrado en la lista de purgables. Se relee la campana para
+        // poder decir POR QUE no lo estaba, porque «no se puede purgar» a secas
+        // hace que quien lo pide piense que el guion esta roto.
+        $campana = $this->exigirPorId($id);
+
+        if ($campana['cerrada_en'] === null) {
+            $motivo = 'no esta cerrada todavia';
+        } elseif ($campana['retencion_dias'] === null) {
+            $motivo = 'no tiene plazo de retencion, de modo que sus datos se conservan';
+        } else {
+            $motivo = 'aun no ha cumplido su plazo de retencion';
+        }
+
+        throw new ErrorAplicacion(
+            'La campana «' . $campana['nombre'] . '» no se puede purgar: ' . $motivo . '.'
         );
     }
 

@@ -310,6 +310,106 @@ class Participacion extends Modelo
     }
 
     /**
+     * Vacia los datos personales de las participaciones de una campana.
+     *
+     * ============================================================================
+     * POR QUE SE VACIA Y NO SE BORRA LA FILA
+     * ============================================================================
+     *
+     * Borrar la fila parece lo natural y es lo que haria cualquiera que no haya
+     * leido el apartado 6, que pide guardar una referencia inmutable entre la
+     * participacion ganadora y la unidad adjudicada. Con la fila borrada:
+     *
+     *   - «ON DELETE SET NULL» de unidades_premio.participacion_id dejaria cada
+     *     unidad sin decir que participacion gano el premio, que es justo lo que
+     *     hay que poder demostrar.
+     *   - El contador de participaciones del panel bajaria, y con el los
+     *     porcentajes de premio que se ensegan a la direccion del comercio.
+     *   - No se podria ni comprobar que un premio se entrego a quien se entrego,
+     *     que es la pregunta que mas veces se hace despues de un sorteo.
+     *
+     * Asi que la fila se queda con lo que no identifica a nadie —momento, tramo,
+     * resultado, el enlace a la unidad— y se vacia lo que si: el formulario, las
+     * formas normalizadas y la huella de unicidad.
+     *
+     * ============================================================================
+     * POR QUE «datos» SE QUEDA EN {} Y NO EN NULL
+     * ============================================================================
+     *
+     * Porque la columna es NOT NULL y porque lleva un CHECK de JSON valido: NULL
+     * no se podria, y un texto que no sea JSON lo rechazaria la base de datos. Un
+     * objeto vacio dice exactamente lo que quiere decir —«aqui ya no hay datos»— y
+     * ademas no duplica la fecha de purga, que ya esta en la columna purgada_en.
+     *
+     * Lo que tiene que hacer el codigo que lee «datos» despues de una purga es
+     * tolerar que falten campos, y no dar por hecho que estan. El resultado de una
+     * participacion ya purgada se enseña sin nombre, y eso es lo correcto.
+     *
+     * ============================================================================
+     * POR QUE clave_unicidad TAMBIEN SE VACIA
+     * ============================================================================
+     *
+     * Es un HMAC, no un DNI, y para alguien con el secreto no seria reversible. Pero
+     * es un identificador estable de una persona, y dejarlo puesto haria que la
+     * campana siguiera «conociendo» a quien participo aun despues de haber borrado
+     * sus datos. Vaciarlo devuelve ademas la promesa del indice unico: si alguien
+     * pidiera que la campana se reabriera, las filas purgadas ya no bloquean a
+     * nadie, porque lo que las bloqueaba era precisamente lo que se ha borrado.
+     *
+     * ============================================================================
+     * POR QUE ES IDEMPOTENTE Y POR QUE NO HACE FALTA UNA MARCA MAS
+     * ============================================================================
+     *
+     * El WHERE filtra por «purgada_en IS NULL», que es la misma columna que deja
+     * escrito. Una segunda pasada no encuentra filas y no cambia nada, y el guion
+     * se puede ejecutar cada noche sin miedo, que es como se ejecuta un trabajo de
+     * cron.
+     *
+     * @param int    $promocionId Campana que se purga.
+     * @param string $momento     Instante en que se hace la purga.
+     *
+     * @return int Numero de participaciones que se han vaciado en esta pasada.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function purgar(int $promocionId, string $momento): int
+    {
+        return $this->db->ejecutar(
+            'UPDATE participaciones
+                SET datos = ?,
+                    datos_normalizados = NULL,
+                    clave_unicidad = NULL,
+                    purgada_en = ?
+              WHERE promocion_id = ?
+                AND purgada_en IS NULL',
+            ['{}', $momento, $promocionId]
+        );
+    }
+
+    /**
+     * Cuenta las participaciones de una campana que todavia tienen datos.
+     *
+     * Los mismos filtros que `purgar()`, porque una cuenta que no coincide con el
+     * vaciado hace que la simulacion de la purga mienta.
+     *
+     * @param int $promocionId Campana que se quiere contar.
+     *
+     * @return int Participaciones pendientes de vaciar.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function contarPendientesDePurga(int $promocionId): int
+    {
+        return (int) $this->db->valor(
+            'SELECT COUNT(*)
+               FROM participaciones
+              WHERE promocion_id = ?
+                AND purgada_en IS NULL',
+            [$promocionId]
+        );
+    }
+
+    /**
      * Cuenta las participaciones de una campana por resultado.
      *
      * Lo usan las pruebas para comprobar que un rechazo no ha dejado rastro

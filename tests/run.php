@@ -3512,6 +3512,463 @@ function caso15(): void
 }
 
 /**
+ * Cierra una campana de prueba con el instante que se le pase.
+ *
+ * Se escribe a mano y no se llama a CierrePromocion a proposito. El servicio de
+ * cierre deja el instante en el momento en que se llama, que hoy, y una prueba que
+ * necesita una campana «cerrada hace dos años» no puede esperar a que el reloj
+ * llegue ahi. Ademas, pasar por el cierre real traeria el estado del plan de
+ * premios y el resto de comprobaciones del cierre, que no son lo que se prueba
+ * aqui: lo que se prueba es la purga.
+ *
+ * @param int    $promocionId Campana que se cierra.
+ * @param string $cerradaEn   Instante en que se considera cerrada.
+ * @param int|null $retencionDias Dias que se conservan, o null para no purgar nunca.
+ *
+ * @return void
+ */
+function cerrarParaPurga(int $promocionId, string $cerradaEn, ?int $retencionDias): void
+{
+    $db = Aplicacion::db();
+
+    $db->ejecutar(
+        'UPDATE promociones
+            SET estado = ?,
+                cerrada_en = ?,
+                retencion_dias = ?,
+                actualizada_en = ?
+          WHERE id = ?',
+        [
+            \App\Models\Promocion::ESTADO_FINALIZADA,
+            $cerradaEn,
+            $retencionDias,
+            $cerradaEn,
+            $promocionId,
+        ]
+    );
+}
+
+/**
+ * Crea una participacion con datos personales, para probar la purga.
+ *
+ * @param int    $promocionId Campana a la que pertenece.
+ * @param int    $tramoId     Tramo en el que se registro.
+ * @param string $semilla     Semilla de la clave de idempotencia.
+ * @param string $datos       Datos personales en JSON.
+ * @param string $momento     Instante de la participacion.
+ *
+ * @return int Identificador de la participacion creada.
+ */
+function participarParaPurga(int $promocionId, int $tramoId, string $semilla, string $datos, string $momento): int
+{
+    $db = Aplicacion::db();
+
+    return $db->insertar(
+        'INSERT INTO participaciones (
+             promocion_id, tramo_id, clave_idempotencia, clave_unicidad,
+             momento, resultado, datos, datos_normalizados, creado_en
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+            $promocionId,
+            $tramoId,
+            claveDePrueba($semilla),
+            hash('sha256', $semilla),
+            $momento,
+            \App\Models\Participacion::RESULTADO_SIN_PREMIO,
+            $datos,
+            '{"dni":"87654321X"}',
+            $momento,
+        ]
+    );
+}
+
+/**
+ * Ejecuta una operacion y devuelve el mensaje del error de aplicacion que lance.
+ *
+ * Las comprobaciones de que una purga NO ocurre necesitan esto. Antes se
+ * comprobaba que el metodo devolviera null, y era un error de la prueba, no del
+ * codigo: devolver null cuando alguien pide purgar una campana en concreto
+ * significa «no hay nada que hacer», y quien lo pide no puede saber si la
+ * campana ya estaba purgada, si no tenia datos o si el guion esta roto. Un error
+ * con el motivo en el mensaje es lo que hace falta.
+ *
+ * @param callable():mixed $operacion Operacion que se espera que falle.
+ * @param string           $fragmento  Parte del mensaje que tiene que aparecer.
+ * @param string           $descripcion Texto de la comprobacion si pasa.
+ *
+ * @return bool True si el error que se ha lanzado contiene el fragmento.
+ */
+function mensajeDeError(callable $operacion, string $fragmento, string $descripcion): bool
+{
+    try {
+        $operacion();
+    } catch (\App\Core\ErrorAplicacion $e) {
+        $cumple = str_contains($e->getMessage(), $fragmento);
+        comprobar($cumple, $descripcion, 'El mensaje fue: ' . $e->getMessage());
+
+        return $cumple;
+    }
+
+    comprobar(false, $descripcion, 'La operacion no ha lanzado ningun error');
+
+    return false;
+}
+
+/**
+ * Prueba la purga de retencion: cuando se vacia, cuando no, y que sobrevive.
+ *
+ * El caso va de menos a mas. Primero se comprueba que NO se purga lo que no
+ * debe —una campana dentro de su plazo, una sin plazo, una que sigue abierta—,
+ * porque si el filtro de fechas fallara, todo lo demas pasaria igual y el fallo
+ * quedaria escondido. Y al final se comprueba que se purga dos veces sin hacer
+ * nada la segunda, que es la propiedad de la que depende que un trabajo de cron
+ * se pueda repetir cada noche.
+ *
+ * @return void
+ */
+function caso16(): void
+{
+    echo 'Caso 16: la purga vacia los datos personales cuando vence el plazo', PHP_EOL;
+
+    $db = Aplicacion::db();
+    $purgador = new \App\Services\Purgador();
+    $hoy = date('Y-m-d');
+
+    // ======================================================================
+    // Una campana que todavia esta dentro de su plazo no se purga. Es la
+    // comprobacion que va primera a proposito: si el filtro de fechas fallara,
+    // todo lo demas de este caso pasaria igual y el fallo estaria escondido.
+    // ======================================================================
+    $dentro = crearEscenarioDePanel(['sufijo' => 'purgada-dentro']);
+    $idDentro = (int) $dentro['promocion'];
+
+    // Cerrada hace un dia, con quince dias de retencion. El plazo no ha vencido.
+    cerrarParaPurga($idDentro, date('Y-m-d', strtotime('-1 day')) . ' 10:00:00', 15);
+
+    $pId = participarParaPurga(
+        $idDentro,
+        (int) $dentro['tramos'][0],
+        'caso16-dentro',
+        '{"dni":"11111111X","nombre":"Persona Dentro"}',
+        $hoy . ' 09:00:00'
+    );
+
+// No se espera un null: el servicio lanza un error con el motivo. Devolver
+    // null cuando alguien pide purgar una campana en concreto significaria «no hay
+    // nada que hacer», y quien lo pide no sabria si ya estaba purgada, si no
+    // tenia datos o si el guion esta roto.
+    mensajeDeError(
+        static fn (): ?array => $purgador->purgarCampana($idDentro, Aplicacion::ahora(), false),
+        'plazo de retencion',
+        'Una campana dentro de su plazo no se purga, y se dice por que'
+    );
+
+    $participacion = $db->uno('SELECT datos, purgada_en FROM participaciones WHERE id = ?', [$pId]);
+    comprobar(
+        $participacion !== null && (string) $participacion['datos'] !== '{}',
+        'Y sus datos siguen intactos, que es lo importante'
+    );
+    comprobar(
+        $participacion !== null && $participacion['purgada_en'] === null,
+        'Sin marca de purga, porque no se ha purgado'
+    );
+
+    borrarEscenarioDePanel($idDentro);
+
+    // ======================================================================
+    // Una campana sin plazo de retencion no se purga nunca, aunque lleva
+    // cerrada mas de un ano.
+    // ======================================================================
+    $sinPlazo = crearEscenarioDePanel(['sufijo' => 'purgada-sin-plazo']);
+    $idSinPlazo = (int) $sinPlazo['promocion'];
+
+    cerrarParaPurga($idSinPlazo, date('Y-m-d', strtotime('-400 days')) . ' 10:00:00', null);
+
+    mensajeDeError(
+        static fn (): ?array => $purgador->purgarCampana($idSinPlazo, Aplicacion::ahora(), false),
+        'no tiene plazo de retencion',
+        'Una campana sin plazo de retencion no se purga, por muy cerrada que este'
+    );
+
+    borrarEscenarioDePanel($idSinPlazo);
+
+    // ======================================================================
+    // Una campana activa no se purga, porque el plazo se cuenta desde el
+    // cierre y una campana activa no esta cerrada.
+    // ======================================================================
+    $activa = crearEscenarioDePanel(['sufijo' => 'purgada-activa']);
+    $idActiva = (int) $activa['promocion'];
+
+    $db->ejecutar(
+        'UPDATE promociones SET retencion_dias = 1 WHERE id = ?',
+        [$idActiva]
+    );
+
+    mensajeDeError(
+        static fn (): ?array => $purgador->purgarCampana($idActiva, Aplicacion::ahora(), false),
+        'no esta cerrada',
+        'Una campana que sigue activa no se purga aunque su retencion sea de un dia'
+    );
+
+    borrarEscenarioDePanel($idActiva);
+
+    // ======================================================================
+    // Y ahora la campana que si se purga: cerrada hace treinta dias, con
+    // quince de retencion.
+    // ======================================================================
+    $escenario = crearEscenarioDePanel(['sufijo' => 'purgada']);
+    $id = (int) $escenario['promocion'];
+    $tramo = (int) $escenario['tramos'][0];
+    $cerrada = date('Y-m-d', strtotime('-30 days')) . ' 10:00:00';
+
+    cerrarParaPurga($id, $cerrada, 15);
+
+    $ganadora = participarParaPurga(
+        $id,
+        $tramo,
+        'caso16-ganadora',
+        '{"dni":"22222222Y","nombre":"Persona Ganadora","email":"ganadora@ejemplo.es"}',
+        date('Y-m-d', strtotime('-30 days')) . ' 11:00:00'
+    );
+
+    $perdida = participarParaPurga(
+        $id,
+        $tramo,
+        'caso16-perdida',
+        '{"dni":"33333333Z","nombre":"Persona Perdida"}',
+        date('Y-m-d', strtotime('-30 days')) . ' 11:30:00'
+    );
+
+    // Un rechazo: no tiene datos personales, pero si una huella de identidad.
+    $db->insertar(
+        'INSERT INTO intentos_rechazados (
+             promocion_id, tramo_id, clave_idempotencia, clave_identidad,
+             motivo_codigo, motivo_texto, momento
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [
+            $id,
+            $tramo,
+            claveDePrueba('caso16-rechazo'),
+            hash('sha256', 'caso16-rechazo'),
+            'dni_duplicado',
+            'El DNI ya habia participado',
+            date('Y-m-d', strtotime('-30 days')) . ' 12:00:00',
+        ]
+    );
+
+    // ---- Correos: uno enviado, uno con error y uno pendiente ---------------
+    // El pendiente es la parte importante del caso. Si la purga lo vaciara, el
+    // worker lo enviaria despues y la tienda recibiria un correo sin cuerpo y
+    // sin destinatario, con el codigo de reclamacion perdido. Se comprueba
+    // expressly que sobrevive intacto.
+    $correoEnviado = $db->insertar(
+        'INSERT INTO correos (
+             promocion_id, tipo, destinatario, asunto, cuerpo, variables,
+             transporte, estado, intentos, enviado_en, creado_en
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+            $id,
+            'ganador',
+            'ganadora@ejemplo.es',
+            'Has ganado',
+            'Tu codigo de reclamacion es ABC-123, ' . 'Persona Ganadora',
+            '{"nombre":"Persona Ganadora"}',
+            'log',
+            'enviado',
+            1,
+            date('Y-m-d', strtotime('-30 days')) . ' 13:00:00',
+            date('Y-m-d', strtotime('-30 days')) . ' 12:30:00',
+        ]
+    );
+
+    $correoError = $db->insertar(
+        'INSERT INTO correos (
+             promocion_id, tipo, destinatario, asunto, cuerpo, variables,
+             transporte, estado, intentos, ultimo_error, creado_en
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+            $id,
+            'no_ganador',
+            'perdida@ejemplo.es',
+            'Gracias por participar',
+            'Persona Perdida',
+            '{"nombre":"Persona Perdida"}',
+            'smtp',
+            'error',
+            3,
+            'Conexion rechazada',
+            date('Y-m-d', strtotime('-30 days')) . ' 12:30:00',
+        ]
+    );
+
+    $correoPendiente = $db->insertar(
+        'INSERT INTO correos (
+             promocion_id, tipo, destinatario, asunto, cuerpo, variables,
+             transporte, estado, intentos, creado_en
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+            $id,
+            'ganador',
+            'pendiente@ejemplo.es',
+            'Has ganado',
+            'Tu codigo de reclamacion es XYZ-789, Persona Pendiente',
+            '{"nombre":"Persona Pendiente"}',
+            'log',
+            'pendiente',
+            0,
+            date('Y-m-d', strtotime('-30 days')) . ' 12:30:00',
+        ]
+    );
+
+    // ---- La simulacion no escribe nada ------------------------------------
+    $simulacion = $purgador->purgarCampana($id, Aplicacion::ahora(), true);
+
+    comprobarIgual(2, (int) $simulacion['participaciones'], 'La simulacion cuenta las dos participaciones');
+    comprobarIgual(2, (int) $simulacion['correos'], 'Y los dos correos ya despachados');
+    comprobarIgual(1, (int) $simulacion['rechazos'], 'Y el rechazo con huella');
+
+    $antesDeSimular = $db->uno('SELECT datos FROM participaciones WHERE id = ?', [$ganadora]);
+    comprobar(
+        $antesDeSimular !== null && (string) $antesDeSimular['datos'] !== '{}',
+        'La simulacion no ha vaciado ninguna participacion'
+    );
+
+    $auditoriasAntes = (int) $db->valor(
+        'SELECT COUNT(*) FROM auditoria WHERE promocion_id = ? AND accion = ?',
+        [$id, \App\Models\Auditoria::ACCION_PURGA]
+    );
+    comprobarIgual(0, $auditoriasAntes, 'Y no ha escrito ninguna auditoria');
+
+    // ---- Ahora la purga de verdad -----------------------------------------
+    $detalle = $purgador->purgarCampana($id, Aplicacion::ahora(), false);
+
+    comprobar($detalle !== null, 'La campana vencida se purga');
+    comprobarIgual(2, (int) $detalle['participaciones'], 'Vacia las dos participaciones');
+    comprobarIgual(2, (int) $detalle['correos'], 'Y los dos correos despachados');
+    comprobarIgual(1, (int) $detalle['rechazos'], 'Y el rechazo con huella');
+
+    // ---- Lo vaciado --------------------------------------------------------
+    $tras = $db->uno('SELECT * FROM participaciones WHERE id = ?', [$ganadora]);
+    comprobarIgual('{}', (string) $tras['datos'], 'La participacion se queda con un JSON vacio');
+    comprobarIgual(null, $tras['datos_normalizados'], 'Y sin sus formas normalizadas');
+    comprobarIgual(null, $tras['clave_unicidad'], 'Y sin la huella de unicidad');
+    comprobar(
+        $tras['purgada_en'] !== null,
+        'Y con la marca de purga puesta'
+    );
+    comprobar(
+        str_starts_with((string) $tras['purgada_en'], date('Y-m-d')),
+        'La marca de purga lleva la fecha de la pasada, no una fecha inventada'
+    );
+
+    // Lo que NO se vacia: la fila sigue y con ella el rastro del sorteo.
+    comprobarIgual('sin_premio', (string) $tras['resultado'], 'La fila conserva su resultado');
+    comprobarIgual(
+        $tramo,
+        (int) $tras['tramo_id'],
+        'Y el tramo en el que se registro, que es lo que demuestra que ocurrio'
+    );
+    comprobar(
+        (string) $tras['momento'] !== '',
+        'Y el momento exacto de la participacion'
+    );
+
+    // El DNI no aparece en ninguna parte de la participacion.
+    comprobar(
+        strpos((string) $db->valor('SELECT datos FROM participaciones WHERE id = ?', [$perdida]), '33333333Z') === false,
+        'El DNI de la participacion perdida tampoco aparece ya en la base'
+    );
+
+    // ---- Correos: los despachados vacios, el pendiente intacto -----------
+    $correo = $db->uno('SELECT * FROM correos WHERE id = ?', [$correoEnviado]);
+    comprobarIgual('', (string) $correo['destinatario'], 'El correo enviado se queda sin destinatario');
+    comprobarIgual('', (string) $correo['cuerpo'], 'Y sin cuerpo');
+    comprobarIgual(null, $correo['variables'], 'Y sin las variables con las que se monto');
+    comprobarIgual('log', (string) $correo['transporte'], 'Pero conserva el transporte');
+    comprobarIgual(1, (int) $correo['intentos'], 'Y los intentos que costo');
+    comprobarIgual('enviado', (string) $correo['estado'], 'Y su estado');
+    comprobar($correo['purgada_en'] !== null, 'Con la marca de purga puesta');
+
+    $fallido = $db->uno('SELECT * FROM correos WHERE id = ?', [$correoError]);
+    comprobarIgual('', (string) $fallido['cuerpo'], 'El correo con error tambien se vacia');
+    comprobarIgual('Conexion rechazada', (string) $fallido['ultimo_error'], 'Y conserva el motivo del fallo');
+
+    $sigue = $db->uno('SELECT * FROM correos WHERE id = ?', [$correoPendiente]);
+    comprobarIgual(
+        'pendiente@ejemplo.es',
+        (string) $sigue['destinatario'],
+        'El correo PENDIENTE conserva su destinatario, porque todavia puede salir'
+    );
+    comprobar(
+        str_contains((string) $sigue['cuerpo'], 'XYZ-789'),
+        'Y conserva su cuerpo con el codigo de reclamacion, que si no se perderia'
+    );
+    comprobarIgual(null, $sigue['purgada_en'], 'Y no lleva marca de purga');
+
+    // ---- Rechazos ----------------------------------------------------------
+    $rechazo = $db->uno('SELECT * FROM intentos_rechazados WHERE promocion_id = ?', [$id]);
+    comprobarIgual(null, $rechazo['clave_identidad'], 'El rechazo se queda sin huella de identidad');
+    comprobarIgual('dni_duplicado', (string) $rechazo['motivo_codigo'], 'Pero conserva el motivo, que es lo que se cuenta');
+
+    // ---- Una sola auditoria, con el recuento ------------------------------
+    $asientos = $db->todos(
+        'SELECT datos_despues FROM auditoria WHERE promocion_id = ? AND accion = ?',
+        [$id, \App\Models\Auditoria::ACCION_PURGA]
+    );
+    comprobarIgual(1, count($asientos), 'La purga escribe un unico asiento de auditoria');
+
+    if ($asientos !== []) {
+        $datos = json_decode((string) $asientos[0]['datos_despues'], true);
+        comprobar(
+            is_array($datos) && (int) ($datos['participaciones'] ?? 0) === 2,
+            'Y el asiento guarda el recuento de participaciones vaciadas'
+        );
+        comprobar(
+            is_array($datos) && (int) ($datos['correos'] ?? 0) === 2,
+            'Y el de correos'
+        );
+    }
+
+    // Y que el asiento no contiene ningun dato personal.
+    comprobar(
+        strpos((string) ($asientos[0]['datos_despues'] ?? ''), '87654321') === false
+        && strpos((string) ($asientos[0]['datos_despues'] ?? ''), 'ganadora@ejemplo.es') === false,
+        'El asiento de auditoria no contiene ningun dato personal, solo el recuento'
+    );
+
+    // ---- Idempotencia: purgar dos veces -----------------------------------
+    $purgador2 = new \App\Services\Purgador();
+    comprobarIgual(
+        null,
+        $purgador2->purgarCampana($id, Aplicacion::ahora(), false),
+        'Purgar una campana ya purgada no hace nada'
+    );
+    comprobarIgual(
+        1,
+        (int) $db->valor(
+            'SELECT COUNT(*) FROM auditoria WHERE promocion_id = ? AND accion = ?',
+            [$id, \App\Models\Auditoria::ACCION_PURGA]
+        ),
+        'Y no escribe un segundo asiento, que es lo que llenaria el historial'
+    );
+
+    // ---- La pasada por listado --------------------------------------------
+    // campanasParaPurgar debe ofrecer la campana mientras su plazo no se haya
+    // purgado, y el servicio debe saltarsela. Se comprueba que la lista la ve y
+    // que el recuento de purgadas no la cuenta.
+    $purgador3 = new \App\Services\Purgador();
+    $recuento = $purgador3->purgar(Aplicacion::ahora(), 50, false);
+    comprobarIgual(
+        0,
+        (int) $recuento['purgadas'],
+        'La pasada por listado no cuenta como purgada una campana que ya lo estaba'
+    );
+
+    limpiarPeticion();
+    borrarEscenarioDePanel($id);
+}
+
+/**
  * Lista de casos disponibles, indexada por numero.
  *
  * @var array<int, callable():void>
@@ -3533,6 +3990,7 @@ const PRUEBAS = [
     13 => 'caso13',
     14 => 'caso14',
     15 => 'caso15',
+    16 => 'caso16',
 ];
 
 // -----------------------------------------------------------------------------

@@ -97,6 +97,22 @@ class Auditoria extends Modelo
     public const ACCION_ALTA = 'alta';
 
     /**
+     * Accion del vaciado de datos personales por retencion.
+     *
+     * Es el asiento que deja constancia de una purga. Se escribe uno por campana,
+     * no uno por fila vaciada: una campana puede tener veinte mil participaciones,
+     * y veinte mil filas de auditoria en las que ademas no se puede decir ni que
+     * se vacio serian inutiles. Lo que tiene que poder contestarse es «¿cuando se
+     * purgo esta campana y cuantas filas?to», y eso cabe en un recuento.
+     *
+     * El recuento va en `datos_despues` y no en `filtros` ni en `filas_mostradas`:
+     * estos dos describen lo que alguien ha mirado, que es otra cosa.
+     *
+     * @var string
+     */
+    public const ACCION_PURGA = 'purga';
+
+    /**
      * Escribe una fila de auditoria.
      *
      * La accion no se comprueba contra una lista cerrada, a proposito: la tabla no
@@ -207,6 +223,52 @@ class Auditoria extends Modelo
                 Aplicacion::ahora(),
             ]
         );
+    }
+
+    /**
+     * Dice si una campana ya tiene escrito un asiento de una accion.
+     *
+     * ============================================================================
+     * POR QUE HACE FALTA ESTE METODO Y NO UN CONTEO
+     * ============================================================================
+     *
+     * Porque el conteo por accion se agrupa por accion y no se puede filtrar por
+     * ella sin_GROUP BY una accion concreta, y la purga necesita preguntar por
+     * una sola. Un EXISTS responde con un si o un no y no trae recuentos que
+     * luego hay que descartar.
+     *
+     * La comprobacion es «existe ya el asiento de esta campana con esta accion»,
+     * sin mirar la fecha ni quien lo escribio, porque en la purga lo que importa es
+     * que la operacion ya se hizo y se hizo una vez. Volver a mirarla no aporta
+     * nada: el vaciado de las tablas es idempotente y su recuento seria cero.
+     *
+     * El indice es (promocion_id, accion), asi que la busqueda no recorre la
+     * tabla, que es lo que importa porque esta comprobacion se hace en cada
+     * campana de cada pasada y el historial de auditoria es la tabla que mas crece
+     * del sistema por culpa de las consultas del panel.
+     *
+     * @param int    $promocionId Campana que se comprueba.
+     * @param int|null $usuarioId  Usuario que se filtra, o null para no filtrar.
+     * @param string $entidad     Entidad que se filtra.
+     * @param string $accion      Accion que se busca.
+     *
+     * @return bool True si ya hay al menos un asiento con esa accion.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function existe(int $promocionId, ?int $usuarioId, string $entidad, string $accion): bool
+    {
+        return (int) $this->db->valor(
+            'SELECT EXISTS (
+                 SELECT 1
+                   FROM auditoria
+                  WHERE promocion_id = ?
+                    AND (? IS NULL OR usuario_id = ?)
+                    AND entidad = ?
+                    AND accion = ?
+             )',
+            [$promocionId, $usuarioId, $usuarioId, $entidad, $accion]
+        ) === 1;
     }
 
     /**

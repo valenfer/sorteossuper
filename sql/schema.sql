@@ -651,6 +651,24 @@ CREATE TABLE IF NOT EXISTS participaciones (
     -- permite practicar sin consumir premios reales.
     es_simulacion      TINYINT(1) NOT NULL DEFAULT 0,
 
+    -- Instante en que la purga de retencion vacio los datos personales de esta
+    -- fila, o NULL si todavia no se ha purgado.
+    --
+    -- La purga NO borra la fila. La fila se queda con su momento, su tramo, su
+    -- resultado y su enlace a la unidad adjudicada, porque el apartado 6 pide una
+    -- referencia inmutable entre la participacion ganadora y la unidad, y sin
+    -- esa fila no habria forma de saber que participacion gano cada premio. Lo
+    -- que se vacia es lo que identifica a una persona: datos, datos_normalizados
+    -- y clave_unicidad.
+    --
+    -- La columna no es un adorno: es lo que hace que la purga sea idempotente sin
+    -- tener que reconocer un JSON, y lo que permite que el panel diga «esta
+    -- campana ya se purgo el dia tal» en vez de no saber nada. Compartir nombre con
+    -- «cerrada_en» seria un error: una cosa es cuando termino la campana y otra
+    -- cuando se borraron los datos, que con una retencion larga puede ser meses
+    -- despues.
+    purgada_en         DATETIME NULL,
+
     creado_en          DATETIME NOT NULL,
 
     PRIMARY KEY (id),
@@ -667,6 +685,11 @@ CREATE TABLE IF NOT EXISTS participaciones (
     KEY ix_participaciones_tramo (tramo_id, momento),
     KEY ix_participaciones_promocion (promocion_id, resultado, momento),
     KEY ix_participaciones_azafata (usuario_azafata_id),
+
+    -- La purga busca las filas de una campana que aun no estan purgadas, y esta
+    -- es la columna que hace que esa busqueda no tenga que recorrer la tabla
+    -- entera: sin indice seria un escaneo por campana purgada.
+    KEY ix_participaciones_purga (promocion_id, purgada_en),
 
     CONSTRAINT fk_participaciones_promocion FOREIGN KEY (promocion_id)
         REFERENCES promociones (id) ON DELETE CASCADE,
@@ -770,11 +793,27 @@ CREATE TABLE IF NOT EXISTS correos (
     intentos           TINYINT UNSIGNED NOT NULL DEFAULT 0,
     ultimo_error       TEXT         NULL,
     enviado_en         DATETIME     NULL,
-
-    -- Momento hasta el que no se reintenta este mensaje, para no repetir un
+-- Momento hasta el que no se reintenta este mensaje, para no repetir un
     -- envio fallido cada vez que se vacie la cola.
     bloqueado_hasta    DATETIME     NULL,
-    creado_en          DATETIME     NOT NULL,
+
+    -- Instante en que la purga de retencion vacio los datos personales de este
+    -- mensaje, o NULL si todavia no se ha purgado.
+    --
+    -- El correo es el segundo sitio donde vive un dato personal, y el mas
+    -- olvidado: el destinatario es una direccion de correo y el cuerpo lleva el
+    -- nombre y el codigo de reclamacion. Borrar la fila de «correos» seria lo
+    -- natural, pero el apartado 7 pide limitar el acceso a los datos de la
+    -- campana, no perder el historico del mensaje. Se vacian las tres columnas
+    -- con datos (destinatario, cuerpo y variables) y se conserva el mensaje, con
+    -- su tipo, su transporte, su estado y sus intentos.
+    --
+    -- Sin esta columna, una segunda pasada del guion no tendria forma de saber
+    -- que those mensajes ya estaban vaciados, y solo se podria reconocer leyendo
+    -- el cuerpo, que para eso no es.
+    purgada_en         DATETIME     NULL,
+
+    creado_en          DATETIME NOT NULL,
 
     PRIMARY KEY (id),
 
@@ -783,6 +822,9 @@ CREATE TABLE IF NOT EXISTS correos (
     KEY ix_correos_cola (estado, bloqueado_hasta, creado_en),
     KEY ix_correos_participacion (participacion_id),
     KEY ix_correos_promocion (promocion_id, estado),
+
+    -- La purga busca los mensajes de una campana que aun no estan purgados.
+    KEY ix_correos_purga (promocion_id, purgada_en),
 
     CONSTRAINT fk_correos_promocion FOREIGN KEY (promocion_id)
         REFERENCES promociones (id) ON DELETE CASCADE,

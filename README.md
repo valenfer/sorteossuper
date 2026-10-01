@@ -137,6 +137,40 @@ asignado aunque el mensaje no llegue, y por eso el aviso al usuario y el reinten
 del worker son dos cosas separadas. Con la cola vacía el comando no hace nada y
 termina sin error, así que se puede poner en el planificador sin miedo.
 
+### Purgador de datos personales
+
+```
+php bin\purgar_datos.php [--campana=ID] [--limite=N] [--real]
+```
+
+Vacía los datos personales de las campañas cerradas cuyo plazo de retención ya ha
+vencido, contando los días **desde el cierre**, que es lo que se le explica a quien
+pide sus datos. Una campaña con `retencion_dias` en `NULL` no se purga nunca, ni
+aunque lleve cerrada años.
+
+**Simula por defecto.** Hay que escribir `--real` para purgar de verdad. No es un
+detalle: una purga no se puede deshacer, así que el primer trabajo de la noche debe
+enseñar qué haría y el que borra tiene que haber escrito la palabra que lo pide.
+`--campana=7` limita la pasada a una campaña, y avisa con el motivo si no se puede
+purgar (dentro de plazo, sin plazo o sin cerrar).
+
+Qué se vacía y qué no:
+
+| Tabla | Se vacía | Se conserva |
+| --- | --- | --- |
+| `participaciones` | `datos` queda en `{}`, `datos_normalizados` y `clave_unicidad` a `NULL` | La fila entera: momento, tramo, resultado y su enlace al premio |
+| `correos` | `destinatario` y `cuerpo` a vacío, `variables` a `NULL` | La fila: tipo, transporte, estado, intentos y motivo del fallo |
+| `intentos_rechazados` | `clave_identidad` a `NULL` | La fila y su `motivo_codigo`, que es lo que se cuenta |
+
+Las **filas no se borran**, porque sin ellas no se podría demostrar a quién se
+entregó cada premio ni cuadraría el panel de seguimiento. Los correos `pendiente` y
+`enviando` **no se purgan**: todavía pueden salir, y vaciarlos dejaría al worker un
+mensaje en blanco con el código de reclamación perdido.
+
+Cada campaña purgada deja **un** asiento de auditoría con los tres recuentos. Volver
+a ejecutar el comando no hace nada: es idempotente, y está pensado para ir en cron
+una vez al día (`30 3 * * *`).
+
 ### Verificador de documentación
 
 ```
@@ -153,7 +187,7 @@ modo que sirve como paso de integración continua.
 ### Suite de pruebas
 
 ```
-php tests\run.php                    # los catorce casos
+php tests\run.php                    # los diecisiete casos
 php tests\run.php --caso 0           # solo uno
 php tests\run.php --caso=2 --verbose
 php tests\run.php --ayuda
@@ -457,10 +491,26 @@ de campaña como validador real, y el envío de correo.
   plan y el calendario. Filtra por fecha, tramo y tipo de premio, y cada visita
   queda anotada con qué filtros se usó y cuántas filas se vieron, como exige D18.
 
-**Pendiente.** La ruleta decorativa del mostrador (D19) y la purga de datos por
-retención. La decisión D4 de mover los premios pendientes entre días sigue prevista
-pero sin usar: el cierre deja las unidades no entregadas donde están y anota el
-recuento, sin reubicarlas.
+**Terminado (hito 7).** El trabajo de consola que purga los datos personales.
+
+- **La regla de elegibilidad vive en un solo sitio.** `Promocion::campanasParaPurgar()`
+  decide qué campañas se pueden purgar —cerradas, con plazo y con el plazo vencido
+  contando desde el cierre— y esa misma condición se repite en SQL para el caso de
+  una campaña concreta, que rechaza con un mensaje que dice el motivo. Comprobar el
+  plazo *después* de vaciar sería una puerta abierta: `--campana` equivocado borraría
+  una campaña que aún está dentro de su plazo, y eso no tiene vuelta atrás.
+- **Vacía, no borra.** Se vacían `participaciones`, `correos` e
+  `intentos_rechazados`, y las filas se quedan con todo lo que describe el sorteo.
+  Se conservan el motivo de un rechazo y el error de un envío fallido, porque sin
+  ellos la auditoría y el panel dejan de cuadrar.
+- **No se purgan los correos pendientes.** Vaciar un mensaje que todavía puede
+  dejaría al worker enviando un correo en blanco y perdería el código de reclamación.
+- **Un asiento de auditoría por campaña**, con los tres recuentos. Es idempotente y
+  va pensado para cron.
+
+**Pendiente.** La ruleta decorativa del mostrador (D19). La decisión D4 de mover los
+premios pendientes entre días sigue prevista pero sin usar: el cierre deja las
+unidades no entregadas donde están y anota el recuento, sin reubicarlas.
 
 **Cómo saber si está sano.** Con el servidor arrancado:
 

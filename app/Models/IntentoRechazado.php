@@ -164,6 +164,83 @@ class IntentoRechazado extends Modelo
     }
 
     /**
+     * Vacia la huella de identidad de los rechazos de una campana.
+     *
+     * ============================================================================
+     * POR QUE ESTA TABLA TAMBIEN SE PURGA, PUES EL ESQUEMA DICE QUE NO TIENE
+     * DATOS PERSONALES
+     * ============================================================================
+     *
+     * El comentario de la tabla en el esquema es correcto en cuanto al nombre, el
+     * DNI y el telefono: aqui no hay ninguno, porque un rechazo no llego a recoger
+     * datos. Lo que hay es `clave_identidad`, un HMAC de la identidad.
+     *
+     * Un HMAC no se puede deshacer sin el secreto del proyecto, asi que la tabla
+     * no contiene un DNI. Pero es un identificador estable de una persona, del
+     * mismo modo que el DNI lo seria, y se guarda sin cambio. Dejarlo puesto
+     * mientras se purga todo lo demas haria que la campana siguiera sabiendo quien
+     * fue rechazado, y que la afirmacion «sus datos estan borrados» no fuese
+     * cierta.
+     *
+     * La huella no se usa para nada mas: el recuento por motivo, que es lo que el
+     * panel enseña y lo que sirve para detectar un abuso, va por
+     * `motivo_codigo` y no la necesita. Perderla no quita ninguna de las dos
+     * cosas.
+     *
+     * ============================================================================
+     * POR QUE ESTA NO NECESITA COLUMNA «purgada_en»
+     * ============================================================================
+     *
+     * Porque vaciarla es su propia marca. El WHERE filtra por
+     * «clave_identidad IS NOT NULL»: una segunda pasada no encuentra nada y no
+     * cambia nada, sin necesidad de una columna mas.
+     *
+     * Lo que se pierde al no tener fecha es poder decir «los rechazos se
+     * purgaron el dia tal». A cambio, esta tabla no necesita ni migracion ni
+     * indice, y su purga no deja ninguna fila a medio camino. Es un intercambio
+     * razonable, y por eso la decision esta escrita aqui y no solo en el codigo.
+     *
+     * @param int $promocionId Campana que se purga.
+     *
+     * @return int Numero de rechazos a los que se ha vaciado la huella.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function purgar(int $promocionId): int
+    {
+        return $this->db->ejecutar(
+            'UPDATE intentos_rechazados
+                SET clave_identidad = NULL
+              WHERE promocion_id = ?
+                AND clave_identidad IS NOT NULL',
+            [$promocionId]
+        );
+    }
+
+    /**
+     * Cuenta los rechazos de una campana que todavia llevan huella de identidad.
+     *
+     * Los mismos filtros que `purgar()`, porque una cuenta que no coincide con el
+     * vaciado hace que la simulacion de la purga mienta.
+     *
+     * @param int $promocionId Campana que se quiere contar.
+     *
+     * @return int Rechazos pendientes de vaciar.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function contarPendientesDePurga(int $promocionId): int
+    {
+        return (int) $this->db->valor(
+            'SELECT COUNT(*)
+               FROM intentos_rechazados
+              WHERE promocion_id = ?
+                AND clave_identidad IS NOT NULL',
+            [$promocionId]
+        );
+    }
+
+    /**
      * Cuenta los rechazos de una campana agrupados por motivo.
      *
      * Un volumen alto de un mismo motivo es la senal de que algo va mal, y es lo

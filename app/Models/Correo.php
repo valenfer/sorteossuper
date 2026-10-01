@@ -202,6 +202,103 @@ class Correo extends Modelo
     }
 
     /**
+     * Vacia los datos personales de los mensajes ya despachados de una campana.
+     *
+     * ============================================================================
+     * POR QUE NO SE PURGAN LOS MENSAJES QUE ESTAN PENDIENTES
+     * ============================================================================
+     *
+     * Esta es la parte de la purga que podria hacer daño de verdad, y no ha sido
+     * una idea posterior: es la primera.
+     *
+     * Un mensaje en estado «pendiente» o «enviando» todavia no ha salido. Si la
+     * purga le vaciara el cuerpo, lo que quedaria en la fila es un mensaje sin
+     * texto y sin destinatario esperando a que el worker lo recoja, y el worker lo
+     * mandaria: la tienda recibiria un correo en blanco dirigido a nadie, y el
+     * codigo de reclamacion del premio se habria perdido para siempre, porque el
+     * unico sitio donde estaba era el cuerpo del mensaje.
+     *
+     * Por eso el WHERE solo toca los estados «enviado» y «error». Un mensaje
+     * pendiente no se purga: se purga en la pasada siguiente, cuando ya haya
+     * salido o cuando se haya rendido cuentas con el fallo, que es cuando ya no
+     * hay nada que enviar. Un mensaje que se queda pendiente para siempre por un
+     * SMTP caido se queda con sus datos, y eso tambien es lo correcto: no se
+     * vacia un mensaje que aun podria llegar.
+     *
+     * ============================================================================
+     * POR QUE SE VACIA Y NO SE BORRA LA FILA
+     * ============================================================================
+     *
+     * Por lo mismo que en las participaciones. La fila dice que se mando un
+     * correo de premio a alguien en una campana, con que transporte y cuantos
+     * intentos llevo. Eso es el historico de la campana y no identifica a nadie.
+     * Lo que identifica a alguien son las tres columnas que se vacian: el
+     * destinatario, el cuerpo con el nombre, y las variables con las que se
+     * construyo el mensaje.
+     *
+     * El estado se conserva a proposito, y con el los intentos y el ultimo error:
+     * el apartado 9 exige que se pueda demostrar que un mensaje se intento y por
+     * que fallo, y eso sigue siendo verdad despues de la purga.
+     *
+     * ============================================================================
+     * POR QUE «cuerpo» Y «destinatario» QUEDAN VACIOS Y NO EN NULL
+     * ============================================================================
+     *
+     * Porque las dos columnas son NOT NULL. El cuerpo queda como cadena vacia, y
+     * el worker ya no va a mirarlo: el mensaje no esta pendiente, por la misma
+     * razon que no lo purga este metodo.
+     *
+     * @param int    $promocionId Campana que se purga.
+     * @param string $momento     Instante en que se hace la purga.
+     *
+     * @return int Numero de mensajes que se han vaciado en esta pasada.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function purgar(int $promocionId, string $momento): int
+    {
+        return $this->db->ejecutar(
+            'UPDATE correos
+                SET destinatario = ?,
+                    cuerpo = ?,
+                    variables = NULL,
+                    purgada_en = ?
+              WHERE promocion_id = ?
+                AND purgada_en IS NULL
+                AND estado IN (?, ?)',
+            ['', '', $momento, $promocionId, 'enviado', 'error']
+        );
+    }
+
+    /**
+     * Cuenta los mensajes de una campana por estado.
+     *
+     * Lo usan las pruebas, para comprobar que una adjudicacion ha encolado el
+     * mensaje y no lo ha enviado, y lo usara el panel de seguimiento.
+     *
+     * @param int $promocionId Campana que se quiere contar.
+     *
+     * @return array<string, int> Estados como claves y recuentos como valores.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function contarPendientesDePurga(int $promocionId): int
+    {
+        // Mismos filtros que `purgar()`, y por el mismo motivo que en la
+        // simulacion del servicio: si la cuenta y el vaciado no coinciden, la
+        // simulacion anuncia una cifra que despues no se cumple y quien la mire
+        // pierde la razon para fiarse de ella.
+        return (int) $this->db->valor(
+            'SELECT COUNT(*)
+               FROM correos
+              WHERE promocion_id = ?
+                AND purgada_en IS NULL
+                AND estado IN (?, ?)',
+            [$promocionId, 'enviado', 'error']
+        );
+    }
+
+    /**
      * Cuenta los mensajes de una campana por estado.
      *
      * Lo usan las pruebas, para comprobar que una adjudicacion ha encolado el

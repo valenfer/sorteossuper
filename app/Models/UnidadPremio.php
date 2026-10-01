@@ -42,6 +42,17 @@
  * viejos sin repartir y haria que el prize pool de cada tramo se perdiera al
  * cambiar de turno.
  *
+ * Y hay un motivo mas por el que el filtro no se puede anadir ni como
+ * reposte: con un filtro por dia, un premio sin reclamar de ayer no volveria a
+ * salir nunca, porque su fecha ya no seria la de hoy. No es que salga tarde, es
+ * que desaparece de la cola, y el cierre lo convertiria en «no entregada» como
+ * si alguien lo hubiera rechazado. El caso 5 de la suite monta dos dias reales y
+ * comprueba que el premio de ayer sale el primero y que ni su «inicio» ni su
+ * «tramo_id» se reescriben.
+ *
+ * «Por que la cola no se filtra por tramo» se completo en
+ * UnidadPremio::primeraPendiente(), que es donde esta la consulta.
+ *
  * @see \App\Services\Adjudicador
  * @see \App\Core\Db::bloquearPromocion()
  * @see apartado 6 de la especificacion, regla central de adjudicacion
@@ -138,6 +149,39 @@ class UnidadPremio extends Modelo
      * bloqueo con nombre: deja la fila de la unidad bloqueada para el resto de
      * la transaccion, de modo que ninguna otra peticion pueda leerla como
      * pendiente ni cambiarla mientras este motor decide.
+     *
+     * ============================================================================
+     * LA COLA CRUZA LOS TRAMOS Y LOS DIAS, Y ESO ES D4
+     * ============================================================================
+     *
+     * El WHERE filtra por campana, por estado y por «inicio <= momento», y nada
+     * mas. No mira el tramo ni la fecha, y esa ausencia es deliberada: es la
+     * decision D4, confirmada, de que la cola de premios se mantiene a lo largo
+     * de los tramos y de los dias.
+     *
+     * Hay que decirlo porque la especificacion dice las dos cosas. Su tabla de
+     * decisiones dice que «los premios pendientes pasan al tramo y al dia
+     * siguiente», y su cuerpo dice que la cola persiste. La segunda es la buena,
+     * por tres razones que se pueden comprobar en el codigo:
+     *
+     *   1. La cola se ordena por «inicio ASC, id ASC». Un premio del lunes sin
+     *      reclamar tiene una hora anterior a la de cualquiera de hoy, asi que
+     *      sale antes que los de hoy. Con un filtro por dia, ese premio no
+     *      saldria nunca: se quedaria PROGRAMADA para siempre, o se perderia al
+     *      cerrar la campana. El caso 5 de la suite lo comprueba.
+     *
+     *   2. «tramo_id» es la referencia autoritativa del horario original
+     *      (apartado 9). Reescribirlo al pasar al dia siguiente haria que un
+     *      premio del lunes pareciera suyo del martes.
+     *
+     *   3. «inicio» es contra lo que el panel mide el retraso. Un premio
+     *     reclamado al dia siguiente tiene que informar de mas de un
+     *      dia de retraso, y mover la fecha a hoy lo haria decir cero.
+     *
+     * No reubicar unidades es, por tanto, parte de la decision y no una
+     * comodidad: la reubicacion seria la que romperia el retraso y el horario.
+     * Si alguna vez hace falta reorganizar la cola, el sitio es una tabla de
+     * asignaciones con su propia fecha, no «inicio» ni «tramo_id».
      *
      * @param int    $promocionId Campana a la que pertenece la cola.
      * @param string $momento     Instante de referencia, en formato

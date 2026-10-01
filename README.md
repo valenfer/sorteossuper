@@ -408,7 +408,7 @@ está escrita de una forma y no de otra. El detalle completo está en el apartad
 | D1 | **Transporte de correo.** Interfaz `Mailer` con dos transportes: `log`, que guarda el mensaje en la tabla `correos` y es el valor por defecto en local, y `smtp`, en PHP puro con `openssl`. Los mensajes se encolan dentro de la transacción de adjudicación y se envían después, para que la latencia del correo nunca bloquee a la clienta ni revierta la adjudicación. |
 | D2 | **Más unidades que minutos disponibles.** El generador aborta y muestra cuántas unidades sobran y cuántos minutos libres hay, con tres salidas: ampliar el tramo, cambiar la precisión o aceptar la coincidencia de horas de forma explícita. Nunca genera horas idénticas en silencio. |
 | D3 | **Identidad de la persona.** Campo clave configurable (DNI, código, ticket, correo o teléfono). Se indexa una huella HMAC-SHA256 con secreto de configuración, nunca el dato en claro. La huella lleva dentro su ámbito, así que un solo índice único cubre «una por campaña», «una por día», «una por ticket» y «una por código». |
-| D4 | **Cola entre días y cierre.** Los premios pendientes pasan al tramo y al día siguiente. Al cerrar la promoción, las unidades no entregadas pasan a `no_entregada`, sin adjudicación retroactiva. Ambas cosas quedan registradas en `auditoria`. |
+| D4 | **Cola entre días y cierre. Confirmada.** Los premios pendientes **no** se reubican: se quedan en la cola global de la promoción y salen por orden de `inicio`, aunque el tramo y el día hayan cambiado. Un premio del lunes sin reclamar sale antes que cualquiera del martes, y ni su `inicio` ni su `tramo_id` se reescriben, de modo que el panel sigue informando del retraso real. Al cerrar la promoción, las unidades no entregadas pasan a `no_entregada`, sin adjudicación retroactiva, y ambas cosas quedan registradas en `auditoria`. La tabla de decisiones de la especificación dice lo contrario; manda el cuerpo, y el motivo está en `ESTADO.md`. |
 | D5 | **Estructura del proyecto.** Front controller en `index.php` con URLs limpias mediante `.htaccess`, que además bloquea el acceso directo a los directorios internos. No requiere modificar la configuración de Apache. |
 | D6 | **Estrategia de pruebas.** Runner propio en PHP CLI, sin Composer ni PHPUnit, con aserciones y contadores. El caso de concurrencia llega en los hitos del motor de adjudicación. **Desviación en el hito 2:** el caso de concurrencia lanza dos procesos PHP de consola con conexiones propias, no dos peticiones HTTP contra Apache, porque hasta el hito 4 no existe ninguna ruta que llame al motor. Lo que se mide, que es la propiedad que importa, es la de la base de datos: dos conexiones compitiendo por la misma unidad. La forma HTTP se añade en el hito 4, cuando la pantalla de participación exista, y solo aporta la capa del servidor web por delante. |
 | D7 | **Zona horaria.** `date_default_timezone_set('Europe/Madrid')` en el arranque, fechas naive en hora local de campaña. No se usa `CONVERT_TZ`, que depende de las tablas de zona horaria de MySQL y no siempre están cargadas. |
@@ -508,9 +508,13 @@ de campaña como validador real, y el envío de correo.
 - **Un asiento de auditoría por campaña**, con los tres recuentos. Es idempotente y
   va pensado para cron.
 
-**Pendiente.** La ruleta decorativa del mostrador (D19). La decisión D4 de mover los
-premios pendientes entre días sigue prevista pero sin usar: el cierre deja las
-unidades no entregadas donde están y anota el recuento, sin reubicarlas.
+**Pendiente.** La ruleta decorativa del mostrador (D19).
+
+**D4 está confirmada y ya no está pendiente.** La cola de premios se mantiene a lo
+largo de los tramos y de los días, y el cierre no reubica las unidades no
+entregadas: las pasa a `no_entregada` y anota el recuento. No queda ningún método
+«para mover premios» sin usar; el que había estaba vacío y se ha eliminado, porque
+su nombre describía justo lo que D4 decide no hacer.
 
 **Cómo saber si está sano.** Con el servidor arrancado:
 

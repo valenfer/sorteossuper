@@ -761,7 +761,8 @@ function caso4(): void
  * Caso 5: la cola de premios y el reparto por orden.
  *
  * Cubre los casos de aceptacion 3 y 4 del apartado 10 de la especificacion, que
- * son la regla central del apartado 6 escrita como comprobacion.
+ * son la regla central del apartado 6 escrita como comprobacion, y ademas el
+ * arrastre de la cola entre dias, que es la decision D4 confirmada.
  *
  * QUE SE COMPRUEBA Y POR QUE ESTOS DATOS
  * ============================================================================
@@ -779,11 +780,34 @@ function caso4(): void
  * premio de las 10:32 se adjudicara antes que uno de las 10:12, que es
  * exactamente el fallo que el apartado 9 describe.
  *
+ * LA SEGUNDA PARTE, LA DEL ARRASTRE ENTRE DIAS
+ * ============================================================================
+ *
+ * Todo lo anterior pasa dentro de un solo dia, y hay una razon para que el caso
+ * tenga dos mitades y no una. «La cola se mantiene a lo largo de los tramos y de
+ * los dias» es una frase que no falla si nadie la ejecuta: el codigo haria lo que
+ * hiciese y la suite seguiria en verde. Por eso D4, al confirmarse, se ha
+ * convertido en comprobaciones y no en un comentario.
+ *
+ * El dato que hace falta para probarlo es un segundo dia, porque con uno solo no
+ * hay arrastre que observar. Se monta una campana con dos tramos, uno por dia, con
+ * un premio ayer sin reclamar y otro hoy todavia sin llegar a su hora. La
+ * participacion entra hoy y tiene que llevarse el de ayer.
+ *
+ * Y se comprueba tambien lo que NO tiene que pasar, que es la mitad que mas
+ * cuesta defender: ni «inicio» ni «tramo_id» se reescriben, y el retraso que ve
+ * el panel sigue siendo de mas de un dia. Un premio reubicado al dia siguiente
+ * pasaria la primera comprobacion y fallaria estas, y con razon: habria perdido
+ * su horario original (D9) y su retraso real.
+ *
+ * @see \App\Models\UnidadPremio::primeraPendiente()
+ * @see decision D4
+ *
  * @return void
  */
 function caso5(): void
 {
-    echo 'Caso 5: la cola de premios reparte por orden y por hora', PHP_EOL;
+    echo 'Caso 5: la cola reparte por orden y arrasta los premios entre dias', PHP_EOL;
 
     borrarEscenarioDeAdjudicacion();
 
@@ -903,6 +927,108 @@ function caso5(): void
     // La campana de este caso tiene el correo apagado, y el esquema lo pone por
     // defecto a proposito. Que no haya ningun mensaje en la cola lo comprueba.
     comprobarIgual(0, mensajesEnCola($escenario['promocion']), 'Sin correo activado no se encola ningun mensaje');
+
+    borrarEscenarioDeAdjudicacion();
+
+    // =========================================================================
+    // EL ARRASTRE ENTRE DIAS, QUE ES LO QUE D4 DICE
+    // =========================================================================
+    //
+    // Todo lo anterior ocurre dentro de un solo dia. Esta parte es la que fija la
+    // decision D4, y no podia quedarse en un comentario: «la cola se mantiene a lo
+    // largo de los tramos y de los dias» es una frase que no falla si nadie la
+    // ejecuta, y este proyecto ha encontrado en la prueba los fallos que la vista
+    // no ve.
+    //
+    // El montaje: dos dias, con un tramo cada uno. Ayer queda un premio sin
+    // reclamar y hoy hay otro que aun no ha llegado a su hora. La participacion
+    // entra hoy. Lo que tiene que pasar es que se lleve el de AYER, que es el mas
+    // antiguo de la cola, y no el de hoy.
+    $hoy = date('Y-m-d');
+    $ayer = date('Y-m-d', strtotime('-1 day'));
+    $db = \App\Core\Aplicacion::db();
+
+    $dosDias = crearEscenarioDeAdjudicacion([], [
+        'dias'        => [$ayer, $hoy],
+        'horasPorDia' => [
+            $ayer => ['10:12:00'],
+            $hoy  => ['11:00:00'],
+        ],
+    ]);
+
+    $premioDeAyer = (int) $db->valor(
+        'SELECT id FROM unidades_premio WHERE promocion_id = ? AND inicio = ?',
+        [$dosDias['promocion'], $ayer . ' 10:12:00']
+    );
+    $premioDeHoy = (int) $db->valor(
+        'SELECT id FROM unidades_premio WHERE promocion_id = ? AND inicio = ?',
+        [$dosDias['promocion'], $hoy . ' 11:00:00']
+    );
+
+    comprobar(
+        $premioDeAyer > 0 && $premioDeHoy > 0,
+        'El escenario de dos dias tiene un premio en cada dia'
+    );
+
+    $motor = new \App\Services\Adjudicador(new ValidadorQueAcepta());
+
+    $resultado = $motor->registrar(
+        $dosDias['promocion'],
+        claveDePrueba('caso5-arrastre'),
+        $dosDias['tramos'][$hoy],
+        ['nombre' => 'Cliente del segundo dia'],
+        null,
+        null,
+        $hoy . ' 11:20:00'
+    );
+
+    comprobarIgual('premio', $resultado['resultado'], 'La participacion del segundo dia recibe premio');
+    comprobarIgual(
+        $premioDeAyer,
+        (int) $resultado['unidad_id'],
+        'Y se lleva el premio de AYER, que es el mas antiguo de la cola'
+    );
+
+    // Y el premio de hoy sigue en la cola para la siguiente participacion, que es
+    // lo que significa que la cola se ordene por hora programada y no por dia.
+    comprobarIgual(
+        'programada',
+        (string) $db->valor(
+            'SELECT estado FROM unidades_premio WHERE id = ?',
+            [$premioDeHoy]
+        ),
+        'El premio de HOY sigue esperando, porque su turno es el siguiente'
+    );
+
+    // ---- Y LO QUE NO SE TOCA, QUE ES LA OTRA MITAD DE LA DECISION ----------
+    //
+    // Confirmar que la cola persiste no es solo decir que el premio viejo sigue
+    // ahí. Es decir que NO se ha reescrito su fecha ni su tramo para que parezca
+    // de hoy. Si alguien anade ese reubicado «para que la cola quede ordenada»,
+    // estas dos comprobaciones son las que lo delatan, y ademas se pierde el
+    // retraso real: el panel lo saca de la diferencia entre «inicio» y
+    // «adjudicada_en», y un premio del lunes reclamado el martes tiene que
+    // informar de mas de un dia de retraso, no de cero.
+    $unidadAyer = $db->uno(
+        'SELECT tramo_id, inicio, adjudicada_en FROM unidades_premio WHERE id = ?',
+        [$premioDeAyer]
+    );
+
+    comprobarIgual(
+        $ayer . ' 10:12:00',
+        (string) $unidadAyer['inicio'],
+        'La hora programada del premio sigue siendo la de ayer, sin reescribir'
+    );
+    comprobarIgual(
+        $dosDias['tramos'][$ayer],
+        (int) $unidadAyer['tramo_id'],
+        'Y sigue en el tramo de ayer, que es la referencia autoritativa de D9'
+    );
+    comprobar(
+        strtotime((string) $unidadAyer['adjudicada_en']) - strtotime((string) $unidadAyer['inicio'])
+            > 24 * 60 * 60,
+        'Y el retraso que informa el panel es de mas de un dia, no de cero'
+    );
 
     borrarEscenarioDeAdjudicacion();
 }

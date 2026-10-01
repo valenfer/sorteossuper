@@ -115,18 +115,15 @@ Este es el resumen para retomar el trabajo. Si solo se lee una cosa de todo el
 documento, que sea esto.
 
 **Punto exacto en el que está.** Los hitos 0 a 7 están cerrados y subidos a
-`origin/master`. No hay nada a medias: el árbol de trabajo está limpio y las tres
-comprobaciones pasan. El commit del hito 7 es `51fec02`; el que viene detrás solo
-apunta este documento a ese hash, como se hizo con los hitos 5 y 6.
+`origin/master`, y D4 está confirmada. No hay nada a medias: el árbol de trabajo
+está limpio y las tres comprobaciones pasan. El commit del hito 7 es `51fec02`; el
+que viene detrás solo apunta este documento a ese hash, como se hizo con los hitos
+5 y 6.
 
 **Lo siguiente, por este orden.**
 
-1. **Preguntar al promotor por D4**, si se quiere el comportamiento completo. La
-   suposición de que los premios pendientes pasan al tramo y al día siguiente sigue
-   sin confirmar (sección «Riesgos y limitaciones abiertas»). El cierre la
-   implementa tal cual está documentado —no reubica— y el proyecto funciona sin
-   reubicar.
-2. **La ruleta de D19, si se quiere.** Decorativa, sin premios en los sectores.
+1. **La ruleta de D19, si se quiere.** Decorativa, sin premios en los sectores.
+2. Los hitos del apartado 10 de la especificación que aún no han empezado.
 
 **Antes de escribir código nuevo, dos avisos.**
 
@@ -140,11 +137,38 @@ apunta este documento a ese hash, como se hizo con los hitos 5 y 6.
   documento son las que más tiempo ahorran. La primera la hace cumplir el
   verificador; la segunda no, y por eso está aquí.
 
-**Lo que era una decisión y ya no lo es.** La suposición de D4 sobre la cola de
-premios pendientes la implementa ahora el cierre del hito 6, y lo hace como
-supuesto del implementador, no como regla del promotor. Sigue siendo de él, pero
-ya no es una pregunta que haya que hacer antes de programar: el código está escrito
-y anotado, y confirmar la decisión es cambiar una línea, no escribir el cierre.
+**D4 está confirmada: la cola persiste.** Ya no es una pregunta pendiente. El
+promotor ha confirmado que los premios pendientes **no** se reubican al tramo ni al
+día siguiente: se quedan en la cola global y salen por orden de `inicio`. Era la
+mitad de la decisión que quedaba abierta, y ahora las dos mitades están
+implementadas y probadas.
+
+Lo escrito es lo que ya hacía el código. `UnidadPremio::primeraPendiente()` filtra
+por campaña, por estado y por `inicio <= momento`, ordena por `inicio, id` y no
+mira ni el tramo ni la fecha; por eso un premio del lunes sin reclamar sale antes
+que cualquiera de los del martes. El cierre del hito 6 ya convertía las unidades no
+entregadas en `no_entregada`, y eso no ha cambiado.
+
+Hay que decirlo porque la especificación dice las dos cosas: su tabla de decisiones
+dice que «los premios pendientes pasan al tramo y al día siguiente» y su cuerpo
+dice que la cola persiste. Gana el cuerpo, y por razones que se pueden comprobar:
+
+1. Con un filtro por día, un premio del lunes sin reclamar no saldría nunca. Se
+   quedaría `programada` para siempre y el cierre lo convertiría en `no_entregada`
+   aunque nadie lo rechazara.
+2. `tramo_id` es la referencia autoritativa del horario original (D9). Reescribirlo
+   haría que un premio del lunes pareciera suyo del martes.
+3. `inicio` es contra lo que el panel mide el retraso. Moverlo a hoy haría que un
+   premio del lunes reclamado el martes informara de cero minutos de retraso.
+
+Por eso la reubicación no era una mejora pendiente: era lo que habría roto el
+retraso y el horario. Si alguna vez hay que reorganizar la cola, el sitio es una
+tabla de asignaciones con su propia fecha, nunca `inicio` ni `tramo_id`.
+
+Lo que sí se ha eliminado es `ConfiguracionPromocion::moverPremiosPendientes()`,
+un método vacío cuyo nombre prometía la reubicación y cuyo cuerpo no hacía nada.
+No lo llamaba nadie. Dejarlo era peor que no tenerlo: el siguiente que lo leyera
+podría pensar que el comportamiento estaba resuelto.
 
 ## 4. Decisiones que condicionan el trabajo
 
@@ -156,7 +180,7 @@ más afectan a lo que viene:
 | **D8** Concurrencia | Bloqueo con nombre por promoción, `SELECT ... FOR UPDATE` sobre la unidad y un `UPDATE ... WHERE estado = 'programada'` del que se comprueba el número de filas afectadas. El último es el que garantiza por sí solo que una unidad nunca se adjudica dos veces. No usar `SKIP LOCKED`: no existe en MariaDB 10.4. **Desviación consciente:** el nombre real del bloqueo es `sorteos:adjudicacion:{id}` y no el literal `sorteo:{id}` de la decisión. `{id}` sigue siendo el de la promoción y la espera sigue siendo de 5 segundos, que es lo que D8 fija; lo que se alarga es el nombre, porque `GET_LOCK` usa un espacio de nombres global del servidor y un `sorteo:1` PODría colisionar con el de otra aplicación en el mismo MariaDB. Ver el comentario de `Db::bloquearPromocion()`. |
 | **D3** Identidad | Huella `HMAC-SHA256` con secreto de configuración, nunca el dato en claro. La huella lleva dentro su ámbito, así que un único índice cubre «una por campaña», «una por día», «una por ticket» y «una por código». |
 | **D10** Separación | `participaciones` solo contiene participaciones válidas y es la única tabla con índices únicos. Los rechazos van a `intentos_rechazados`, sin índice único, para que un rechazo no bloquee a nadie. |
-| **D4** Cola y cierre | Los premios pendientes pasan al tramo y al día siguiente. Al cerrar, las unidades no entregadas pasan a `no_entregada`, sin adjudicación retroactiva. |
+| **D4** Cola y cierre | **Confirmada.** La cola de premios persiste a lo largo de los tramos y de los días: los pendientes **no** se reubican y salen por orden de `inicio`. Al cerrar, las unidades no entregadas pasan a `no_entregada`, sin adjudicación retroactiva. La tabla de decisiones de la especificación dice lo contrario («pasan al tramo y al día siguiente»); gana el cuerpo, por las tres razones de la sección «Por dónde continuar». `UnidadPremio::primeraPendiente()` no filtra por tramo ni por fecha, y el caso 5 lo comprueba con dos días reales. |
 | **D7** Zona horaria | `Europe/Madrid` en el arranque, fechas naive. **No usar `CONVERT_TZ`**: depende de tablas de zona horaria que no siempre están cargadas. |
 | **D2** Calendario | Si hay más unidades que minutos libres, el generador aborta y lo dice. Nunca genera horas idénticas en silencio. |
 | **D9** Modelo de datos | `unidades_premio` guarda `tramo_id` como referencia autoritativa y un único `inicio`. La fecha, la hora y la etiqueta del tramo se derivan al mostrar. |
@@ -314,7 +338,7 @@ también `views/`, que antes se saltaba.
 | Asunto | Estado |
 | --- | --- |
 | **El límite de intentos se puede saltar borrando las cookies.** Vive en la sesión del navegador. | Conocido. Documentado en el README. La mitigación que sirve de verdad es un límite por dirección IP en Apache, que no se ha añadido porque depende de la configuración del servidor y no del proyecto. |
-| **La suposición sobre la cola está sin confirmar por el promotor.** Que los premios pendientes pasen al tramo y al día siguiente es un supuesto de implementación, no una regla confirmada. | El hito 6 ya lo implementa: el cierre pasa las unidades no entregadas a `no_entregada` y no las reubica, y anota el recuento en la respuesta. Sigue siendo un supuesto del implementador, así que conviene confirmarlo antes de una campaña real, como avisa el apartado 6. |
+| ~~La suposición sobre la cola está sin confirmar por el promotor.~~ | **Resuelto: D4 confirmada.** Los premios pendientes **no** pasan al tramo ni al día siguiente; se quedan en la cola global y salen por orden de `inicio`. El cierre del hito 6 ya hacía la mitad que faltaba (pasar a `no_entregada` sin adjudicación retroactiva) y el comportamiento de la cola no ha necesitado cambio: `UnidadPremio::primeraPendiente()` nunca filtró por tramo ni por fecha. Se ha quitado el método vacío `moverPremiosPendientes()`, que prometía la reubicación que D4 descarta, y el caso 5 prueba el arrastre entre dos días reales. Ver «Por dónde continuar». |
 | **Horas de verano.** Un tramo que cruce el cambio de hora de octubre tiene una hora de pared ambigua o inexistente. | El apartado 13 pide validarlo. Está pendiente de implementar en el generador de calendario. |
 | **La instalación de XAMPP no tiene `mail()` ni GD.** | Resuelto por diseño (D1 y validación con `finfo`). |
 | **La base `sorteos` tiene filas de auditoría de las pruebas manuales.** | Sin consecuencias: el instalador nunca borra datos y el repositorio no contiene la base. |
@@ -645,9 +669,16 @@ solo no se cruza nunca con la vista, y el hueco queda sin mirar.
 permanecen en la cola global de `unidades_premio` y no se filtran por tramo,
 tal como establece la decisión D4. Esto evita que el pool de premios de cada
 tramo se pierda al cambiar de turno (ver `app\Models\UnidadPremio`, apartado
-"Por qué la cola no se filtra por tramo"). El método
-`ConfiguracionPromocion::moverPremiosPendientes()` está previsto para futuras
-expansiones que puedan reorganizar las unidades según el turno actual.
+"Por qué la cola no se filtra por tramo").
+
+**D4 — Corregido al confirmar la decisión.** Este párrafo mencionaba un método
+`ConfiguracionPromocion::moverPremiosPendientes()` «previsto para futuras
+expansiones». Se ha borrado. El método estaba vacío, no lo llamaba nadie y su
+nombre prometía justo lo que D4 dice que **no** se hace: reubicar las unidades al
+tramo o al día siguiente. Confirmada la decisión, prometerlo era peor que no
+tenerlo, porque el siguiente que lo leyera podía dar por hecho que el
+comportamiento estaba resuelto. Si alguna vez hace falta reorganizar la cola, el
+sitio es una tabla de asignaciones con su propia fecha, no `inicio` ni `tramo_id`.
 
 ### Hito 5 — Correo (`550eaa8`)
 

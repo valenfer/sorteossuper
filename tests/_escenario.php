@@ -156,20 +156,35 @@ function borrarEscenarioDeAdjudicacion(): void
 }
 
 /**
- * Crea una campana de pruebas con un tramo y las unidades que se le pidan.
+ * Crea una campaña de pruebas con un tramo por día y las unidades que se pidan.
  *
- * @param array<int, string> $horas     Horas programadas de las unidades, en
- *                                      formato «H:i:s». Se crean en ese orden y
- *                                      cada una es una unidad con su propia hora.
- * @param array<string, mixed> $opciones Ajustes de la campana:
- *                                      «correo» para activar el envio a
- *                                      ganadoras, «simulacion» para ponerla en
- *                                      modo ensayo.
+ * Por defecto se comporta como siempre lo ha hecho: un único tramo, el de hoy, que
+ * abarca todo el día, con las horas que se le pasen. Lo que se ha añadido son los
+ * días.
+ *
+ * Se pueden pedir varios días porque la decisión D4 —que la cola de premios se
+ * mantiene a lo largo de los tramos y de los días— no se puede probar con un solo
+ * día: un premio del lunes sin reclamar solo demuestra algo el martes, y hace
+ * falta un segundo tramo para que exista un «turno» al que pertenecer.
+ *
+ * @param array<int, string>   $horas    Horas programadas de las unidades, en
+ *                                       formato «H:i:s». Si se pasan «dias», las
+ *                                       horas van todas al primer día salvo que
+ *                                       se use «horasPorDia».
+ * @param array<string, mixed> $opciones Ajustes de la campaña:
+ *                                       «correo» para activar el envío a
+ *                                       ganadoras, «simulacion» para ponerla en
+ *                                       modo ensayo, «dias» para crear un tramo
+ *                                       por cada fecha indicada, y
+ *                                       «horasPorDia» para repartir las unidades
+ *                                       por fecha, necesario para probar el
+ *                                       arrastre entre días.
  *
  * @return array<string, mixed> Identificadores de lo creado: «promocion»,
- *                             «tramo», «tipo_premio» y «unidades», que es la
- *                             lista de identificadores de unidad en el mismo
- *                             orden que las horas recibidas.
+ *                             «tramo» (el del primer día), «tramos» (todos, por
+ *                             fecha), «tipo_premio» y «unidades», que es la lista
+ *                             de identificadores de unidad en el mismo orden en
+ *                             que se han pedido.
  */
 function crearEscenarioDeAdjudicacion(array $horas, array $opciones = []): array
 {
@@ -179,10 +194,14 @@ function crearEscenarioDeAdjudicacion(array $horas, array $opciones = []): array
     $correo = !empty($opciones['correo']) ? 1 : 0;
     $simulacion = !empty($opciones['simulacion']) ? 1 : 0;
 
-    // El tramo es de todo el dia: estos casos no prueban los horarios del tramo,
-    // que son cosa del hito 4, sino la cola de premios. Que el tramo abarque las
-    // horas que se van a usar evita tener que pensar en el dato mientras se
-    // prueba otra cosa.
+    // Un tramo por dia. Por defecto, solo el de hoy, que es lo que necesitan los
+    // casos que no miran el arrastre entre dias. La fecha de inicio de la campana
+    // se adelanta al primer dia, porque una campana que empieza hoy no puede
+    // tener un tramo ayer, y el dato tiene que ser coherente aunque la prueba no
+    // lo llegue a mirar.
+    $dias = $opciones['dias'] ?? [date('Y-m-d')];
+    $primerDia = (string) $dias[0];
+
     $promocionId = $db->insertar(
         'INSERT INTO promociones (
              nombre, zona_horaria, estado, fecha_inicio, modo_simulacion,
@@ -190,11 +209,12 @@ function crearEscenarioDeAdjudicacion(array $horas, array $opciones = []): array
              correo_ganador_asunto, correo_ganador_cuerpo,
              correo_no_ganador_asunto, correo_no_ganador_cuerpo,
              creado_en, actualizada_en
-         ) VALUES (?, ?, ?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
             nombreCampanaDePrueba(),
             'Europe/Madrid',
             'activa',
+            $primerDia,
             $simulacion,
             $correo,
             $correo,
@@ -207,18 +227,22 @@ function crearEscenarioDeAdjudicacion(array $horas, array $opciones = []): array
         ]
     );
 
-    // El tramo llega hasta las 23:59:00 y no hasta las 23:59:59 porque los
+    // Cada tramo llega hasta las 23:59:00 y no hasta las 23:59:59 porque los
     // segundos tienen que valer cero: Tramos::esHora() los rechaza, que es lo
     // correcto, ya que el esquema guarda la hora con precision de minuto. Escribo
     // el INSERT a mano y saltarme el validador ha hecho durante un tiempo que este
     // tramo no sirviera para nada, y que al probar la participacion por HTTP
     // saltara el «sin tramo activo» sin que se entendiera por que, porque el dato
     // estaba bien mirado y solo era invalido para las reglas.
-    $tramoId = $db->insertar(
-        'INSERT INTO tramos (promocion_id, fecha, hora_inicio, hora_fin, creado_en)
-         VALUES (?, CURDATE(), ?, ?, ?)',
-        [$promocionId, '00:00:00', '23:59:00', $ahora]
-    );
+    $tramos = [];
+
+    foreach ($dias as $dia) {
+        $tramos[(string) $dia] = $db->insertar(
+            'INSERT INTO tramos (promocion_id, fecha, hora_inicio, hora_fin, creado_en)
+             VALUES (?, ?, ?, ?, ?)',
+            [$promocionId, $dia, '00:00:00', '23:59:00', $ahora]
+        );
+    }
 
     $tipoPremioId = $db->insertar(
         'INSERT INTO tipos_premio (promocion_id, nombre, descripcion, creado_en, actualizado_en)
@@ -228,18 +252,30 @@ function crearEscenarioDeAdjudicacion(array $horas, array $opciones = []): array
 
     $unidades = [];
 
-    foreach ($horas as $hora) {
-        $unidades[] = $db->insertar(
-            'INSERT INTO unidades_premio (
-                 promocion_id, tramo_id, tipo_premio_id, inicio, estado, creado_en, modificado_en
-             ) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [$promocionId, $tramoId, $tipoPremioId, date('Y-m-d') . ' ' . $hora, 'programada', $ahora, $ahora]
-        );
+    // Las unidades se pueden pedir por dia, que es lo que necesita el caso del
+    // arrastre. Si no se piden, todas van al primer dia, que es lo que
+    // necesitan los casos que no lo miran.
+    $horasPorDia = $opciones['horasPorDia'] ?? [];
+
+    if ($horasPorDia === []) {
+        $horasPorDia = [$primerDia => $horas];
+    }
+
+    foreach ($horasPorDia as $dia => $horasDelDia) {
+        foreach ($horasDelDia as $hora) {
+            $unidades[] = $db->insertar(
+                'INSERT INTO unidades_premio (
+                     promocion_id, tramo_id, tipo_premio_id, inicio, estado, creado_en, modificado_en
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [$promocionId, $tramos[(string) $dia], $tipoPremioId, $dia . ' ' . $hora, 'programada', $ahora, $ahora]
+            );
+        }
     }
 
     return [
         'promocion'   => $promocionId,
-        'tramo'       => $tramoId,
+        'tramo'       => $tramos[$primerDia],
+        'tramos'      => $tramos,
         'tipo_premio' => $tipoPremioId,
         'unidades'    => $unidades,
     ];

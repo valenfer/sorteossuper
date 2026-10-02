@@ -31,6 +31,7 @@ configura la promoción y el personal de tienda registra las participaciones.
 | 5. Correo | Terminado | `550eaa8` | Transporte `log` y `smtp`, cola de mensajes, reintentos, worker. |
 | 6. Panel de seguimiento | Terminado | `53f90be` | Métricas, filtros, auditoría, cierre de promoción. |
 | 7. Scripts de línea de comandos | Terminado | `51fec02` | El worker del correo y el purgador de datos por retención. |
+| 8. Concurrencia por HTTP | Terminado | `cb9b714` | El caso 19: dos participaciones simultáneas de verdad contra Apache (D6). |
 
 **El orden importa.** El hito 2 va antes que el 3 y el 4 a propósito: es el
 único punto donde un error no se ve en la pantalla y se manifiesta días
@@ -99,8 +100,9 @@ el motor que usa las cuatro tablas centrales, el panel que las configura, la
 pantalla que las usa y el worker que manda el correo.
 
 **Lo que no hay todavía.** Nada de lo que estaba en la lista abierta: la prueba de
-concurrencia por HTTP de D6 existe y es el caso 19. Lo que sí queda es trabajo de
-hito nuevo, y la sección 3 no lo anuncia porque todavía no se ha escrito.
+concurrencia por HTTP de D6 existe y es el caso 19, con su apartado en el registro
+de hitos. Lo único que queda por decidir es cuál es el siguiente hito, y eso lo
+decide el promotor.
 
 **En la raíz hay un `bbdd.png` con un diagrama de la base de datos hecho a
 mano.** Se versiona desde el hito 3, con la autorización del promotor, porque es
@@ -114,21 +116,25 @@ que romper».
 Este es el resumen para retomar el trabajo. Si solo se lee una cosa de todo el
 documento, que sea esto.
 
-**Punto exacto en el que está.** Los hitos 0 a 7 están cerrados y subidos a
+**Punto exacto en el que está.** Los hitos 0 a 8 están cerrados y subidos a
 `origin/master`, y las decisiones D4, D6 y D19 están confirmadas. No hay nada a
 medias: el árbol de trabajo está limpio y las tres comprobaciones pasan. El commit de
-D19 es `c6e91c4`, el de D4 es `dbf2fdf`, el del hito 7 es `51fec02` y el del hito 8
-(D6) se está terminando ahora.
+D19 es `c6e91c4`, el de D4 es `dbf2fdf`, el del hito 7 es `51fec02` y el del hito 8,
+que es D6, es `cb9b714`. `master` está sincronizado con `origin/master`.
 
 **Lo siguiente, por este orden.**
 
-1. **Nada pendiente de D6.** La prueba de concurrencia por HTTP está escrita y es el
-   caso 19 de la suite, y su apartado entero está en el registro de hitos, más abajo.
-   Cuando se llegue al siguiente hito, este documento tiene que decir cuál es, porque
-   ahora mismo la respuesta es que no queda ninguno: eso no es un olvido, es que D6
-   era el último hueco que quedaba abierto y se ha cerrado.
+1. **Nada pendiente de D6.** La prueba de concurrencia por HTTP está escrita, es el
+   caso 19 de la suite, y tiene su apartado entero en el registro de hitos, más abajo.
+   La suite son 20 casos y 487 comprobaciones, y las tres comprobaciones de la
+   sección 2 pasan.
+2. **El siguiente hito está por decidir, y esa es la decisión que hay que tomar
+   primero.** No hay nada de código pendiente: lo único abierto es qué se hace ahora,
+   y la respuesta no está escrita en ningún sitio porque es una decisión del
+   promotor, no una tarea técnica. Cuando la haya, este apartado tiene que decir
+   cuál es, y no basta con decir «el siguiente».
 
-**Antes de escribir código nuevo, dos avisos.**
+**Antes de escribir código nuevo, tres avisos.**
 
 - La purga vacía correos en estado «pendiente» si alguien la llama mal, y eso
   significa que el worker manda un correo en blanco con el código de reclamación
@@ -136,6 +142,13 @@ D19 es `c6e91c4`, el de D4 es `dbf2fdf`, el del hito 7 es `51fec02` y el del hit
   por eso no hay ninguna forma de saltársela: si alguna vez hay que tocar esa
   consulta, hay que tocar también la prueba del caso 16 que comprueba que el
   pendiente sobrevive intacto.
+- **El caso 19 toca el `.htaccess` de la raíz**, que es un fichero real y versionado
+  del proyecto, y lo deja como estaba al terminar. Eso casi salió bien: la primera
+  versión convertía los finales de línea de CRLF a LF y dejaba líneas en blanco
+  acumuladas, así que después de cada ejecución el `git status` enseñaba un
+  `.htaccess` modificado con 121 líneas que nadie había escrito. Si alguna vez hay
+  que tocar ese bloque, hay que conservar los finales de línea que ya tiene el
+  fichero, y comprobar con `git status` que no se queda nada puesto.
 - Las secciones «Reglas que no hay que romper» y «Trampas conocidas» de este
   documento son las que más tiempo ahorran. La primera la hace cumplir el
   verificador; la segunda no, y por eso está aquí.
@@ -938,7 +951,7 @@ plazo, sin cerrar), la simulación sin escribir nada, el vaciado de las tres tab
 lo que sobrevive, el correo pendiente intacto, un único asiento de auditoría y la
 idempotencia. La suite son 17 casos y 415 comprobaciones.
 
-### Hito 8 - Concurrencia por HTTP de verdad (`pendiente de commit`)
+### Hito 8 - Concurrencia por HTTP de verdad (`cb9b714`)
 
 **La decisión que había que tomar antes de escribir nada.** D6 pide «dos peticiones
 HTTP simultáneas contra Apache», y la suite tenía que seguir pasando en una máquina
@@ -995,6 +1008,13 @@ la concurrencia, así que se comprobó las dos veces:
   avisa; uno que escribe donde no debe, no avisa nunca.
 - La configuración temporal se escribe **sin BOM**. Con BOM, Apache responde con una
   página de error de 192 bytes y el caso falla con un 403 que no explica nada.
+- **Si el caso 19 se cae, la limpieza tiene que cerrar los sockets antes de borrar.**
+  Se comprobó con un fallo a propósito y sin eso pasaba: las dos peticiones seguían
+  adjudicando mientras el `DELETE` iba borrando la campaña, y el borrado se comía la
+  clave foránea de `fk_participaciones_tramo` con una participación que acababa de
+  aparecer. El síntoma es un error de integridad en la limpieza, después de que el
+  caso ya haya pasado todas sus comprobaciones, así que parece un fallo de otra cosa
+  que no es la que hay que arreglar.
 - El `.htaccess` del repositorio está en CRLF. Reescribirlo con LF no rompe Apache
   pero ensucia el estado del git con 121 líneas que nadie ha escrito, así que el
   helper reutiliza los finales de línea que encuentra.

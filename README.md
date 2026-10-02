@@ -209,6 +209,11 @@ php tests\run.php --ayuda
 | 11 | Reglas de duplicado y su ámbito: una por campaña, por día, por ticket y por DNI, la combinación de dos reglas, el caso de no tener ninguna, y que la huella guardada sea la del ámbito que toca y no siempre la de campaña. |
 | 12 | El envío de correo: encolado en la transacción, transporte `log` y `smtp` contra un servidor SMTP falso, un fallo que no revierte la adjudicación, el bloqueo de un mensaje ya enviado, el límite de reintentos y la cola vacía. |
 | 13 | La pantalla de participación de punta a punta: el formulario y el POST con su token CSRF y su identificador de intento, el resultado, el rechazo con el texto de la campaña, la casilla de consentimiento y el código de reclamación según se mande correo o no. |
+| 14 | Cerrar una campaña: los premios sin entregar pasan a `no_entregada`, los ya entregados no se tocan, cerrar dos veces no hace nada y queda la fila de auditoría con quién lo cerró. |
+| 15 | El panel de seguimiento: las cifras de la campaña, los filtros y que una campaña no se confunda con otra. |
+| 16 | La purga por retención: caduca los datos personales cuando vence el plazo, respeta el de los correos pendientes y es idempotente. |
+| 17 | La ruleta decorativa de D19: los sectores no llevan texto, el centro trae el nombre del comercio, el resultado está escrito en el HTML antes de que el navegador ejecute nada, un rechazo no gira ruleta y el giro está en el CSS y no en un temporizador. |
+| 18 | El cambio de hora: qué días tienen salto y cuáles no, el tramo que cruza la ventana se rechaza, los dos bordes de la ventana son válidos, en marzo el tramo da 120 minutos y en octubre 180, y no se puede colocar un premio en una hora que no existió. |
 
 La suite no necesita PHPUnit (decisión D6) y
 funciona contra la base de pruebas, nunca contra la de la campaña. Escriben un

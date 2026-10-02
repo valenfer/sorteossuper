@@ -114,13 +114,25 @@ Este es el resumen para retomar el trabajo. Si solo se lee una cosa de todo el
 documento, que sea esto.
 
 **Punto exacto en el que está.** Los hitos 0 a 7 están cerrados y subidos a
-`origin/master`, y D4 está confirmada. No hay nada a medias: el árbol de trabajo
-está limpio y las tres comprobaciones pasan. El commit de D4 es `dbf2fdf`, y el
-del hito 7 es `51fec02`.
+`origin/master`, y las decisiones D4 y D19 están confirmadas. No hay nada a medias:
+el árbol de trabajo está limpio y las tres comprobaciones pasan. El commit de D19 es
+`c6e91c4`, el de D4 es `dbf2fdf` y el del hito 7 es `51fec02`.
 
 **Lo siguiente, por este orden.**
 
-1. Los hitos del apartado 10 de la especificación que aún no han empezado.
+1. **La prueba de concurrencia por HTTP.** Es lo único que queda de verdad abierto, y
+   conviene leerlo antes de tocarlo: el caso 7 lanza dos procesos PHP con conexiones
+   propias, que es lo que de verdad compite por el bloqueo, pero D6 pide «dos
+   peticiones HTTP simultáneas contra Apache». Hoy ningún test hace HTTP: hasta el
+   caso 13, que se presenta como «por HTTP», llama al enrutador en el mismo proceso
+   con `htmlDeAccion()`. Añadirlo tiene una decisión que hay que tomar antes: si la
+   suite puede exigir que Apache esté arrancado, o si el caso se salta cuando no lo
+   está. Lo segundo es lo que yo haría, para que `tests\run.php` siga pasando en una
+   máquina donde no hay servidor, pero entonces hay que decirlo en la salida y en el
+   README, porque un caso que se salta en silencio es peor que uno que no existe.
+2. Nada más. Los nueve casos de aceptación del apartado 10 de la especificación
+   tienen cobertura, y los hitos del apartado 11 de este documento están todos
+   cerrados.
 
 **Antes de escribir código nuevo, dos avisos.**
 
@@ -336,7 +348,7 @@ también `views/`, que antes se saltaba.
 | --- | --- |
 | **El límite de intentos se puede saltar borrando las cookies.** Vive en la sesión del navegador. | Conocido. Documentado en el README. La mitigación que sirve de verdad es un límite por dirección IP en Apache, que no se ha añadido porque depende de la configuración del servidor y no del proyecto. |
 | ~~La suposición sobre la cola está sin confirmar por el promotor.~~ | **Resuelto: D4 confirmada.** Los premios pendientes **no** pasan al tramo ni al día siguiente; se quedan en la cola global y salen por orden de `inicio`. El cierre del hito 6 ya hacía la mitad que faltaba (pasar a `no_entregada` sin adjudicación retroactiva) y el comportamiento de la cola no ha necesitado cambio: `UnidadPremio::primeraPendiente()` nunca filtró por tramo ni por fecha. Se ha quitado el método vacío `moverPremiosPendientes()`, que prometía la reubicación que D4 descarta, y el caso 5 prueba el arrastre entre dos días reales. Ver «Por dónde continuar». |
-| **Horas de verano.** Un tramo que cruce el cambio de hora de octubre tiene una hora de pared ambigua o inexistente. | El apartado 13 pide validarlo. Está pendiente de implementar en el generador de calendario. |
+| **Horas de verano.** Un tramo que cruce el cambio de hora tiene una hora de pared ambigua o inexistente: en marzo las 02:00 no existen, y en octubre ocurren dos veces. | **Resuelto y probado.** `Tramos` rechaza el tramo que cruza la ventana, `minutosValidos()` se salta las horas que no llegaron a existir y `comprobarDentroDelTramo()` no admite un premio en una hora inexistente. El caso 18 cubre las dos ramas por separado: en marzo (29/03/2026) las 02:00 no existen y el tramo de 01:00 a 04:00 da 120 minutos en vez de 180; en octubre (25/10/2026) cada hora ocurre dos veces y el mismo tramo sí da los 180. También comprueba los dos bordes, que son un turno de apertura y uno de mañana que tienen que poder existir. Ver «Por dónde continuar». |
 | **La instalación de XAMPP no tiene `mail()` ni GD.** | Resuelto por diseño (D1 y validación con `finfo`). |
 | **La base `sorteos` tiene filas de auditoría de las pruebas manuales.** | Sin consecuencias: el instalador nunca borra datos y el repositorio no contiene la base. |
 

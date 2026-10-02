@@ -3325,6 +3325,292 @@ function caso17(): void
 }
 
 /**
+ * Caso 18: las horas que no existen y las que ocurren dos veces (cambio de hora).
+ *
+ * ============================================================================
+ * QUE COMPRUEBA Y POR QUE
+ * ============================================================================
+ *
+ * El codigo ya valida el cambio de hora: `Tramos::comprobarCambioDeHora()` rechaza
+ * el tramo que cruza la ventana, `Tramos::minutosValidos()` se salta las horas que
+ * no llegaron a existir y `Tramos::comprobarDentroDelTramo()` no acepta que se
+ * coloque un premio a una hora que ese dia no ocurrio. Todo eso estaba escrito y
+ * **no tinha ni una sola prueba**, que es la forma mas comoda de que una regla se
+ * rompa sin que nadie se entere: no hay nada que avise.
+ *
+ * La regla de fondo cabe en dos frases, y son las dos ramas del salto:
+ *
+ *   1. En marzo el reloj salta de las 02:00 a las 03:00. Entre esas dos horas de
+ *      pared NO EXISTE NINGUNA. Un tramo que las cover y un premio colocado a las
+ *      02:30 harian referencia a una hora que ningun reloj iba a marcar.
+ *
+ *   2. En octubre el reloj atrasa de las 03:00 a las 02:00. Entre las 02:00 y las
+ *      03:00 CADA HORA OCURRE DOS VECES. Aqui la hora si existe, pero es ambigua:
+ *      un premio placed a las 02:30 no sabria cual de las dos veces es.
+ *
+ * Que las dos ramas se comprueben por separado no es purismo. Un fallo que quitara
+ * una de las dos comprobaciones dejaria pasar la mitad de los tramos que hoy se
+ * rechazan, y no habria ningun aviso: el resultado seria un calendario con premios
+ * en horas que no existen, que es un fallo que no se ve hasta que alguien pregunta
+ * por un premio que no se ha repartido.
+ *
+ * ============================================================================
+ * POR QUE LAS FECHAS ESTAN ESCRITAS A MANO Y NO SE CALCULAN
+ * ============================================================================
+ *
+ * Cabria la tentacion de calcular «el ultimo domingo de marzo de este ano» para
+ * que la prueba siga valiendo dentro de tres años. Seria un error. El calculo
+ * devolveria una fecha de 2029, 2030 o mas adelante, y la base de datos de zonas
+ * horarias puede no tener todavia la transicion de ese dia, con lo que
+ * `cambioDeHora()` devolveria null y la comprobacion pasaria sin comprobar nada:
+ * exactamente el fallo que esta prueba existe para cazar. Escribir 2026-03-29 y
+ * 2026-10-25 a mano es escribir un hecho, y un hecho no caduca.
+ *
+ * @see \App\Services\Tramos::cambioDeHora()
+ * @see \App\Services\Tramos::comprobarCambioDeHora()
+ * @see \App\Services\Tramos::minutosValidos()
+ * @see \App\Services\Tramos::comprobarDentroDelTramo()
+ *
+ * @return void
+ */
+function caso18(): void
+{
+    echo 'Caso 18: las horas que no existen y las que ocurren dos veces', PHP_EOL;
+
+    $tramos = new \App\Services\Tramos();
+
+    // Los dos dias del cambio de hora de 2026 en Europe/Madrid, y un dia normal
+    // de cada lado para comprobar que no se inventan ventanas donde no las hay.
+    $marzo = '2026-03-29';
+    $octubre = '2026-10-25';
+    $normal = '2026-07-01';
+
+    // ---- 1. Los dias que no tienen cambio de hora ---------------------------
+    // Esto va el primero a proposito. Si `cambioDeHora()` devolviera una ventana
+    // inventada en cualquier dia, todas las comprobaciones siguientes pasarian por
+    // casualidad, por un motivo equivocado. Un dia de julio no tiene ningun salto.
+    foreach ([$normal, '2026-03-28', '2026-03-30', '2026-10-24', '2026-10-26'] as $diaSinSalto) {
+        comprobar(
+            $tramos->cambioDeHora($diaSinSalto) === null,
+            'El ' . $diaSinSalto . ' no tiene cambio de hora y no inventa ninguna ventana'
+        );
+    }
+
+    // ---- 2. Las dos ventanas, que son iguales y las dos ramas distintas ---
+    $cambioMarzo = $tramos->cambioDeHora($marzo);
+    $cambioOctubre = $tramos->cambioDeHora($octubre);
+
+    comprobar($cambioMarzo !== null, 'El ' . $marzo . ' tiene cambio de hora');
+    comprobar($cambioOctubre !== null, 'Y el ' . $octubre . ' tambien');
+
+    // La ventana de pared es la misma en las dos fechas: de las 02:00 a las 03:00.
+    // Lo que cambia es lo que pasa dentro, y por eso las dos se comprueban por
+    // separado en los puntos 4 y 5.
+    comprobarIgual('02:00:00', (string) ($cambioMarzo['ventana_desde'] ?? ''), 'En marzo la ventana empieza a las 02:00');
+    comprobarIgual('03:00:00', (string) ($cambioMarzo['ventana_hasta'] ?? ''), 'Y acaba a las 03:00');
+
+    comprobarIgual(true, $cambioMarzo['adelanta'] ?? null, 'En marzo el reloj adelanta: sobran horas');
+    comprobarIgual(false, $cambioOctubre['adelanta'] ?? null, 'En octubre el reloj atrasa: sobran repeticiones');
+
+    // El motivo lo lee alguien que no sabe lo que es un desplazamiento horario,
+    // asi que se comprueba que dice lo que tiene que decir y no solo que existe.
+    comprobarContiene(
+        (string) ($cambioMarzo['motivo'] ?? ''),
+        'no existe ninguna hora',
+        'El aviso de marzo dice que no existe ninguna hora'
+    );
+    comprobarContiene(
+        (string) ($cambioOctubre['motivo'] ?? ''),
+        'ocurre dos veces',
+        'Y el de octubre dice que cada hora ocurre dos veces'
+    );
+
+    // ---- 3. El tramo que cruza la ventana se rechaza -------------------------
+    // El caso central. Un tramo de la 01:00 a las 04:00 de un domingo de marzo es
+    // perfectamente bueno en cualquier otro dia, y ese dia no vale: su mitad cae
+    // en horas que no existen.
+    $validador = new \App\Core\Validador();
+    $tramos->comprobarCambioDeHora($validador, 'tramo', $marzo, '01:00', '04:00');
+
+    comprobar(
+        $validador->tieneErrores(),
+        'Un tramo de 01:00 a 04:00 el dia del cambio de marzo NO es valido'
+    );
+    comprobarContiene(
+        json_encode($validador->errores(), JSON_UNESCAPED_UNICODE) ?: '',
+        'cambia la hora',
+        'Y el motivo le dice a la azafata que ese dia cambia la hora'
+    );
+
+    // El error va en el campo del inicio, que es donde esta el boton de guardar y
+    // donde el navegador ira a mirar. Si se colgara de otro nombre, el formulario
+    // no lo moveria nunca.
+    comprobar(
+        array_key_exists('tramo_inicio', $validador->errores()),
+        'Y el error se cuelga del campo del inicio, no de un campo cualquiera'
+    );
+
+    // ---- 4. Los bordes de la ventana, que es donde se equivoca uno -----------
+    // Estas dos son las comprobaciones que mas valor tienen de todo el caso, y no
+    // por lo que miran sino por lo que impiden. La condicion de solape es
+    // «empieza antes de que acabe la ventana y acaba despues de que empiece». Un
+    // signo mal puesto, o un <= donde tocaba un <, aqui no prohibiria un tramo
+    // malo: prohibiria dos tramos buenos, el de la madrugada que acaba justo cuando
+    // empieza el hueco y el de la tarde que empieza justo cuando acaba.
+    //
+    // Y prohibirlos seria peor que no mirar nada. Un tramo de 00:00 a 02:00 el
+    // domingo de cambio es el turno de apertura de un supermercado, y el de
+    // 03:00 a 06:00 es el de la mañana. Los dos son validos y los dos estan en el
+    // limite de una hora de pared.
+    $validador = new \App\Core\Validador();
+    $tramos->comprobarCambioDeHora($validador, 'tramo', $marzo, '00:00', '02:00');
+    comprobar(
+        !$validador->tieneErrores(),
+        'Un tramo que ACABA justo cuando empieza el hueco es valido: no lo cruza',
+        'errores: ' . json_encode($validador->errores(), JSON_UNESCAPED_UNICODE)
+    );
+
+    $validador = new \App\Core\Validador();
+    $tramos->comprobarCambioDeHora($validador, 'tramo', $marzo, '03:00', '06:00');
+    comprobar(
+        !$validador->tieneErrores(),
+        'Y uno que EMPIEZA justo cuando acaba el hueco tambien es valido',
+        'errores: ' . json_encode($validador->errores(), JSON_UNESCAPED_UNICODE)
+    );
+
+    // Y el caso intermedio, que es el que se parece al error: empezar un minuto
+    // antes del final de la ventana ya es estar dentro.
+    $validador = new \App\Core\Validador();
+    $tramos->comprobarCambioDeHora($validador, 'tramo', $marzo, '02:01', '04:00');
+    comprobar(
+        $validador->tieneErrores(),
+        'Un minuto dentro del hueco ya es dentro: 02:01 a 04:00 no vale'
+    );
+
+    // ---- 5. Lo mismo en octubre, y el caso en que no hay hueco --------------
+    // En octubre la ventana de pared es identica, asi que el tramo que la cruza
+    // tambien se rechaza. No por las horas inexistentes, que ahi no hay ninguna,
+    // sino por la ambiguedad: un premio a las 02:30 no sabria cual de las dos
+    // veces que ocurrio es.
+    $validador = new \App\Core\Validador();
+    $tramos->comprobarCambioDeHora($validador, 'tramo', $octubre, '01:00', '04:00');
+    comprobar(
+        $validador->tieneErrores(),
+        'En octubre el tramo que cruza la ventana tambien se rechaza, por ambigua que es'
+    );
+
+    // Y en un dia normal no hay nada que rechazar, ni aunque el tramo sea el mas
+    // largo del dia entero.
+    $validador = new \App\Core\Validador();
+    $tramos->comprobarCambioDeHora($validador, 'tramo', $normal, '00:00', '23:59');
+    comprobar(
+        !$validador->tieneErrores(),
+        'En un dia sin cambio de hora un tramo de todo el dia es valido'
+    );
+
+    // ---- 6. Cuantos minutos caben de verdad ---------------------------------
+    // Aqui esta la consecuencia de todo lo anterior, y es donde se ve el dano en
+    // numero. Un tramo de 01:00 a 04:00 tiene 180 minutos de reloj. En marzo solo
+    // existen 120, porque los 60 de las 02:00 no llegaron a pasar. Si el generador
+    // repartiera por la resta, admitiria 180 premios y colocaria los ultimos 60 en
+    // horas que no existen: filas fantasma que MariaDB acepta sin decir nada y que
+    // el motor no adjudicaria nunca.
+    $minutosNormales = $tramos->minutosValidos($normal, '01:00:00', '04:00:00');
+    comprobarIgual(180, count($minutosNormales), 'Un dia normal da los 180 minutos que tiene el tramo');
+
+    $minutosMarzo = $tramos->minutosValidos($marzo, '01:00:00', '04:00:00');
+    comprobarIgual(120, count($minutosMarzo), 'En marzo el mismo tramo da 120 minutos, no 180');
+
+    // Y que no quede ni una hora de las que no existen. Esto es mas fuerte que
+    // contar: si el codigo se saltara 30 minutos en vez de 60, el recuento habria
+    // delatado el cambio, pero esta comprobacion delata el fallo
+    // aunque el numero saliera bien por casualidad.
+    $horasDelHueco = array_values(array_filter(
+        $minutosMarzo,
+        static fn (string $hora): bool => str_starts_with($hora, '02:')
+    ));
+
+    comprobar(
+        $horasDelHueco === [],
+        'Y ninguna de las horas entregadas es una hora que ese dia no existio',
+        'horas del hueco: ' . implode(', ', array_slice($horasDelHueco, 0, 5))
+    );
+
+    // En octubre NO hay horas que no existan, asi que el tramo da los 180 minutos
+    // enteros. Esta es la asimetria deliberada del codigo, y por eso se comprueba
+    // con su numero: en octubre la hora 02:30 existe, dos veces, y es una hora
+    // repartible. Perderla, como hace el error que esta comprobacion caza, seria
+    // quitarle a un supermercado los premios de una hora entera un domingo al año.
+    $minutosOctubre = $tramos->minutosValidos($octubre, '01:00:00', '04:00:00');
+    comprobarIgual(180, count($minutosOctubre), 'En octubre el mismo tramo si da los 180 minutos');
+
+    comprobar(
+        count(array_unique($minutosOctubre)) === count($minutosOctubre),
+        'Y no hay horas repetidas, aunque las de las 02:00 ocurran dos veces'
+    );
+
+    // ---- 7. Que no se pueda colocar un premio en una hora que no ocurrio -----
+    // El calendario deja mover y anadir unidades a mano, asi que el tramo puede
+    // estar bien y el premio colocado en una hora que ese dia no existia. MariaDB
+    // la aceptaria sin pestanear, porque para ella 02:30 es una hora perfectamente
+    // normal, y el premio se quedaria en la cola para siempre sin repartirse.
+    $errores = $tramos->comprobarDentroDelTramo($marzo, '01:00:00', '04:00:00', $marzo, '02:30');
+    comprobar(
+        $errores !== [],
+        'No se puede colocar un premio a las 02:30 de un dia en que esa hora no existio'
+    );
+    comprobarContiene(
+        json_encode($errores, JSON_UNESCAPED_UNICODE) ?: '',
+        'no existen',
+        'Y el error lo explica en castellano, no con un codigo'
+    );
+
+    // Media hora mas tarde si existe, y entra sin problema.
+    $errores = $tramos->comprobarDentroDelTramo($marzo, '01:00:00', '04:00:00', $marzo, '03:30');
+    comprobar(
+        $errores === [],
+        'Pero a las 03:30 si, porque esa hora ya existe'
+    );
+
+    // Y en octubre las 02:30 tambien se aceptan, por lo mismo que antes: existen.
+    $errores = $tramos->comprobarDentroDelTramo($octubre, '01:00:00', '04:00:00', $octubre, '02:30');
+    comprobar(
+        $errores === [],
+        'Y en octubre las 02:30 tambien valen, porque esas horas existen'
+    );
+
+    // ---- 8. Y que el panel no deje colar un tramo por la puerta de atrás -----
+    // Todo lo anterior es el servicio. El servicio es el que razona, pero el que
+    // guarda es el controlador, asi que se prueba el camino entero: se monta un
+    // tramo de 01:00 a 04:00 en el dia del cambio y se pide que se valide por la
+    // misma via que el panel. Un servicio bien escrito al que nadie llama en la
+    // escritura de la fila es una regla que no protege de nada.
+    $escenario = crearEscenarioDePanel(['premios' => 1, 'tramos' => 1]);
+    $id = (int) $escenario['promocion'];
+
+    $validador = new \App\Core\Validador();
+    $datos = $tramos->validarCampos($validador, 'tramo', $marzo, '01:00', '04:00');
+    $tramos->comprobarCambioDeHora($validador, 'tramo', (string) $datos['fecha'], (string) $datos['hora_inicio'], (string) $datos['hora_fin']);
+
+    comprobar(
+        $datos !== null && $validador->tieneErrores(),
+        'El camino que usa el panel para guardar un tramo tampoco deja cruzar el hueco'
+    );
+
+    // Y nada de eso ha escrito una fila: la comprobacion tiene que haber ocurrido
+    // antes de tocar la tabla, no despues de arreglarlo.
+    $tramosEnElDia = (int) \App\Core\Aplicacion::db()->valor(
+        'SELECT COUNT(*) FROM tramos WHERE promocion_id = ? AND fecha = ?',
+        [$id, $marzo]
+    );
+
+    comprobarIgual(0, $tramosEnElDia, 'Y en la tabla no ha quedado ningun tramo para ese dia');
+
+    borrarEscenarioDePanel($id);
+    limpiarPeticion();
+}
+
+/**
  * Caso 14: cerrar una campana deja los premios sin entregar y lo apunta.
  *
  * ============================================================================
@@ -4362,6 +4648,7 @@ const PRUEBAS = [
     15 => 'caso15',
     16 => 'caso16',
     17 => 'caso17',
+    18 => 'caso18',
 ];
 
 // -----------------------------------------------------------------------------

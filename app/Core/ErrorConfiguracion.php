@@ -44,6 +44,29 @@ class ErrorConfiguracion extends ErrorAplicacion
     }
 
     /**
+     * Muestra un mensaje que indica que la variable de entorno que apunta al
+     * fichero de configuracion no sirve.
+     *
+     * El mensaje es deliberadamente ruidoso. Si aqui se cayera en config/config.php
+     * sin decir nada, una prueba creeria estar corriendo contra la base de
+     * pruebas mientras escribe en la de la campana real, que es el peor fallo
+     * posible aqui.
+     *
+     * @param string $indicada Ruta que venia en la variable de entorno.
+     *
+     * @return self Excepcion preparada para mostrar al instalador.
+     */
+    public static function rutaConfigInvalida(string $indicada): self
+    {
+        return new self(
+            "La variable de entorno SORTEOS_CONFIG apunta a un sitio que no es un fichero:\n\n"
+            . "    {$indicada}\n\n"
+            . "La aplicacion no continua con la configuracion de config/config.php a proposito,\n"
+            . "porque podria estar escribiendo donde no cree.\n"
+        );
+    }
+
+    /**
      * Muestra un mensaje que indica que falta una clave de configuracion.
      *
      * @param string $ruta Ruta de la clave ausente, en notacion de puntos. Por

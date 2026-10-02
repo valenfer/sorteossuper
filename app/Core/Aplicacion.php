@@ -57,6 +57,19 @@ use Throwable;
 class Aplicacion
 {
     /**
+     * Variable de entorno que permite leer la configuracion de otro fichero.
+     *
+     * Lo usa el caso 19, que necesita que las peticiones HTTP se ejecuten
+     * contra la base de pruebas. No hay otra forma de conseguirlo: una
+     * peticion web no puede cambiar de base a proposito, porque eso permitiria
+     * que un POST moviese los datos de una campana real. Cambiar el fichero
+     * de configuracion de todo el proceso es otra cosa: lo decide quien arranca
+     * el servidor, no quien envia el formulario.
+     *
+     * @var string
+     */
+    public const VARIABLE_CONFIG = 'SORTEOS_CONFIG';
+    /**
      * Ruta absoluta de la raiz del proyecto, con barra final.
      *
      * @var string
@@ -199,6 +212,15 @@ class Aplicacion
 
         $ficheroConfig = self::$raiz . 'config/config.php';
 
+        // Si la variable de entorno apunta a otro fichero, ese es el que se lee.
+        // Se comprueba que exista antes de cargarlo y, si no, se falla: caer en
+        // silencio en config/config.php seria justo el fallo peligroso, que es
+        // creer que se esta probando contra una base y estar escribiendo en otra.
+        $ficheroIndicado = getenv(self::VARIABLE_CONFIG);
+        if (is_string($ficheroIndicado) && trim($ficheroIndicado) !== '') {
+            $ficheroConfig = self::rutaConfigIndicada(trim($ficheroIndicado));
+        }
+
         // El mensaje distingue este fallo del caso en que el fichero existe
         // pero esta mal formado, que daria un error distinto y mas claro.
         if (!is_file($ficheroConfig)) {
@@ -210,12 +232,63 @@ class Aplicacion
         $config = require $ficheroConfig;
         if (!is_array($config)) {
             throw new ErrorConfiguracion(
-                'config/config.php deberia devolver un array de configuracion.'
+                $ficheroConfig . ' deberia devolver un array de configuracion.'
             );
         }
 
         self::$config = $config;
         return self::$config;
+    }
+
+    /**
+     * Resuelve la ruta del fichero de configuracion indicado por entorno.
+     *
+     * Una ruta relativa se resuelve desde la raiz del proyecto, para que la
+     * variable valga desde cualquier carpeta. Se normalizan las barras porque
+     * en Windows se escribe con contrabarras y PHP entiende las dos.
+     *
+     * @param string $indicada Ruta tal y como viene en la variable de entorno.
+     *
+     * @return string Ruta absoluta, con barras, apuntando al fichero.
+     *
+     * @throws ErrorConfiguracion Si la ruta no existe o no es un fichero.
+     */
+    private static function rutaConfigIndicada(string $indicada): string
+    {
+        $ruta = str_replace('\\', '/', $indicada);
+
+        if (!self::esAbsoluta($ruta)) {
+            $ruta = self::$raiz . $ruta;
+        }
+
+        if (!is_file($ruta)) {
+            throw ErrorConfiguracion::rutaConfigInvalida($indicada);
+        }
+
+        return $ruta;
+    }
+
+/**
+     * Dice si una ruta con barras es absoluta, en los dos estilos de Windows y
+     * en los de Unix.
+     *
+     * En Windows cuenta como absoluta «C:/...». Con una sola letra sin barra no
+     * lo es: «C:» a secas es la carpeta actual de esa unidad.
+     *
+     * @param string $ruta Ruta ya normalizada a barras.
+     *
+     * @return bool
+     */
+    private static function esAbsoluta(string $ruta): bool
+    {
+        if ($ruta === '' || $ruta[0] !== '/') {
+            // Una letra de unidad seguida de dos puntos es el otro caso de
+            // ruta absoluta en Windows, y «C:/...» ya empieza por barra y ha
+            // salido antes por la otra condicion.
+            return preg_match('#^[A-Za-z]:/#', $ruta) === 1;
+        }
+
+        return true;
     }
 
     /**

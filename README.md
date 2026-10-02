@@ -187,7 +187,7 @@ modo que sirve como paso de integración continua.
 ### Suite de pruebas
 
 ```
-php tests\run.php                    # los diecisiete casos
+php tests\run.php                    # los veinte casos
 php tests\run.php --caso 0           # solo uno
 php tests\run.php --caso=2 --verbose
 php tests\run.php --ayuda
@@ -214,6 +214,7 @@ php tests\run.php --ayuda
 | 16 | La purga por retención: caduca los datos personales cuando vence el plazo, respeta el de los correos pendientes y es idempotente. |
 | 17 | La ruleta decorativa de D19: los sectores no llevan texto, el centro trae el nombre del comercio, el resultado está escrito en el HTML antes de que el navegador ejecute nada, un rechazo no gira ruleta y el giro está en el CSS y no en un temporizador. |
 | 18 | El cambio de hora: qué días tienen salto y cuáles no, el tramo que cruza la ventana se rechaza, los dos bordes de la ventana son válidos, en marzo el tramo da 120 minutos y en octubre 180, y no se puede colocar un premio en una hora que no existió. |
+| 19 | Dos participaciones simultáneas por HTTP de verdad: dos azafatas con sesiones propias contra Apache, y se comprueba que las dos estaban dentro del servidor a la vez esperando el cerrojo, no encoladas. |
 
 La suite no necesita PHPUnit (decisión D6) y
 funciona contra la base de pruebas, nunca contra la de la campaña. Escriben un
@@ -221,10 +222,34 @@ aviso en la salida de error al cambiar de base, y eso es intencionado: si
 aparece fuera de `tests/run.php`, significa que alguien ha cambiado de base en
 otro sitio y hay que investigar.
 
+**El caso 19 necesita Apache arrancado.** Es el único que hace peticiones
+HTTP de verdad, y si no encuentra servidor se salta con un `[OMITIDO]` en la
+salida en vez de fingir que ha pasado. Para apuntar a otro sitio:
+
+```
+$env:SORTEOS_URL = "http://localhost/sorteos"    # PowerShell
+set SORTEOS_URL=http://localhost/sorteos          # cmd
+```
+
+El caso llega hasta ese punto porque la aplicación, cuando la arranca Apache, lee
+la variable de entorno `SORTEOS_CONFIG` para saber qué fichero de configuración
+cargar, y así funciona contra la base de pruebas. El núcleo sigue sin tener forma
+de cambiar de base desde una petición web: esto lo decide el servidor al arrancar,
+no el código durante la petición. Para arrancar una instancia a mano con otra
+configuración, sin tocar nada del proyecto:
+
+```
+set SORTEOS_CONFIG=C:\ruta\a\otra\config.php
+```
+
+Si la ruta no existe, la aplicación falla con un error claro en vez de arrancar
+con la configuración que sea.
+
 El caso 4 solo puede comprobar la rama de «no hay sesión»: el núcleo da por
 hecho que en la consola no hay nadie, porque `esPeticionWeb()` mira `PHP_SAPI`.
-La rama del rol equivocado necesita una petición web de verdad y se ha
-comprobado a mano contra el servidor.
+La rama del rol equivocado necesita una petición web de verdad y solo la
+comprueba el caso 19, que entra por HTTP con una sesión de navegador real; ahí lo
+que se prueba es que la azafata entra y el reparto sale bien.
 
 El caso 7 es el único que lanza otros procesos. Cada uno repite la comprobación
 de que la base de pruebas no se llama igual que la de la campaña, y ambos
@@ -526,6 +551,13 @@ largo de los tramos y de los días, y el cierre no reubica las unidades no
 entregadas: las pasa a `no_entregada` y anota el recuento. No queda ningún método
 «para mover premios» sin usar; el que había estaba vacío y se ha eliminado, porque
 su nombre describía justo lo que D4 decide no hacer.
+
+**D6 está confirmada y ya no está pendiente.** La prueba de concurrencia por HTTP
+existe: el caso 19 mete a dos azafatas en el servidor a la vez, cada una con su
+sesión, y comprueba que las dos llegaron al mismo tiempo. Antes de darla por buena,
+se comprobó que la prueba muerde: sin el cerrojo retenido, o con una sola cookie
+para las dos peticiones, falla. Es la diferencia entre una prueba de concurrencia y
+una prueba de mirar dos veces si el mismo caso da lo mismo.
 
 **Cómo saber si está sano.** Con el servidor arrancado:
 

@@ -98,8 +98,9 @@ participaciones, la de cola de correos y la de auditoría. El modelo de datos es
 el motor que usa las cuatro tablas centrales, el panel que las configura, la
 pantalla que las usa y el worker que manda el correo.
 
-**Lo que no hay todavía.** Sigue sin haber HTTP en la prueba de concurrencia, por
-lo que se dice en la sección 4.
+**Lo que no hay todavía.** Nada de lo que estaba en la lista abierta: la prueba de
+concurrencia por HTTP de D6 existe y es el caso 19. Lo que sí queda es trabajo de
+hito nuevo, y la sección 3 no lo anuncia porque todavía no se ha escrito.
 
 **En la raíz hay un `bbdd.png` con un diagrama de la base de datos hecho a
 mano.** Se versiona desde el hito 3, con la autorización del promotor, porque es
@@ -114,25 +115,18 @@ Este es el resumen para retomar el trabajo. Si solo se lee una cosa de todo el
 documento, que sea esto.
 
 **Punto exacto en el que está.** Los hitos 0 a 7 están cerrados y subidos a
-`origin/master`, y las decisiones D4 y D19 están confirmadas. No hay nada a medias:
-el árbol de trabajo está limpio y las tres comprobaciones pasan. El commit de D19 es
-`c6e91c4`, el de D4 es `dbf2fdf` y el del hito 7 es `51fec02`.
+`origin/master`, y las decisiones D4, D6 y D19 están confirmadas. No hay nada a
+medias: el árbol de trabajo está limpio y las tres comprobaciones pasan. El commit de
+D19 es `c6e91c4`, el de D4 es `dbf2fdf`, el del hito 7 es `51fec02` y el del hito 8
+(D6) se está terminando ahora.
 
 **Lo siguiente, por este orden.**
 
-1. **La prueba de concurrencia por HTTP.** Es lo único que queda de verdad abierto, y
-   conviene leerlo antes de tocarlo: el caso 7 lanza dos procesos PHP con conexiones
-   propias, que es lo que de verdad compite por el bloqueo, pero D6 pide «dos
-   peticiones HTTP simultáneas contra Apache». Hoy ningún test hace HTTP: hasta el
-   caso 13, que se presenta como «por HTTP», llama al enrutador en el mismo proceso
-   con `htmlDeAccion()`. Añadirlo tiene una decisión que hay que tomar antes: si la
-   suite puede exigir que Apache esté arrancado, o si el caso se salta cuando no lo
-   está. Lo segundo es lo que yo haría, para que `tests\run.php` siga pasando en una
-   máquina donde no hay servidor, pero entonces hay que decirlo en la salida y en el
-   README, porque un caso que se salta en silencio es peor que uno que no existe.
-2. Nada más. Los nueve casos de aceptación del apartado 10 de la especificación
-   tienen cobertura, y los hitos del apartado 11 de este documento están todos
-   cerrados.
+1. **Nada pendiente de D6.** La prueba de concurrencia por HTTP está escrita y es el
+   caso 19 de la suite, y su apartado entero está en el registro de hitos, más abajo.
+   Cuando se llegue al siguiente hito, este documento tiene que decir cuál es, porque
+   ahora mismo la respuesta es que no queda ninguno: eso no es un olvido, es que D6
+   era el último hueco que quedaba abierto y se ha cerrado.
 
 **Antes de escribir código nuevo, dos avisos.**
 
@@ -446,6 +440,24 @@ Cosas que ya han costado tiempo y que conviene no volver a cruzar.
   `intentos_rechazados` tienen que ir antes que `tramos`. Si no, la limpieza falla
   con un error de integridad **después** de que el caso haya pasado todas sus
   comprobaciones, y el fallo señala la limpieza, no lo que falló.
+- **`php -S` no sirve para nada que necesite concurrencia en Windows.** Es de un
+  solo hilo y el `PHP_CLI_SERVER_WORKERS` responde con «forking is not supported on
+  this platform». Atiende una petición y las demás esperan. Para probar dos
+  peticiones a la vez hay que usar Apache.
+- **Una configuración PHP con BOM hace que Apache devuelva 192 bytes de error.** Ni
+  un 500, ni un 403, ni una pista: la respuesta es del servidor web y no del
+  código. `Set-Content -Encoding UTF8` en PowerShell pone el BOM; el fichero
+  temporal del caso 19 se tiene que escribir sin él.
+- **La cookie de sesión es `SORTEOSSID` y el valor no vale entero para
+  `peticionWeb()`.** `valorDeCookie()` devuelve solo lo que va después del `=`. Si se
+  manda eso como cabecera `Cookie:` tal cual, el navegador simulado no tiene sesión,
+  el primer POST responde 403 con «la sesión ha caducado» y da la impresión de que
+  Apache no guarda sesiones. No las guarda: es que la cabecera no tenía nombre. Va
+  con `cabeceraDeCookie()`.
+- **Las dos peticiones del caso 19 tienen que llevar el prefijo de la URL.** La
+  función `peticionWeb()` lo pone, pero el caso abre los sockets a mano para no leer
+  la respuesta antes de tiempo, y ahí hay que escribir `$servidor['prefijo']` a
+  mano. Sin él, Apache devuelve 404 y parece un fallo de rutas de la aplicación.
 
 ## 9. Entorno
 
@@ -925,3 +937,71 @@ estaba purgada, si no tenía datos o si el guion está roto. Ahora lanza
 plazo, sin cerrar), la simulación sin escribir nada, el vaciado de las tres tablas,
 lo que sobrevive, el correo pendiente intacto, un único asiento de auditoría y la
 idempotencia. La suite son 17 casos y 415 comprobaciones.
+
+### Hito 8 - Concurrencia por HTTP de verdad (`pendiente de commit`)
+
+**La decisión que había que tomar antes de escribir nada.** D6 pide «dos peticiones
+HTTP simultáneas contra Apache», y la suite tenía que seguir pasando en una máquina
+sin servidor. El promotor eligió que **el caso se salte cuando no hay Apache**, y
+que se diga en la salida: un caso que se salta en silencio es peor que uno que no
+existe, así que `caso19()` imprime `[OMITIDO]` con el motivo y la cuenta como
+correcta. Se puede apuntar a otro servidor con `SORTEOS_URL`.
+
+**Por qué hizo falta tocar el núcleo.** Las pruebas no pueden llamar a
+`usarBaseDePruebas()` desde una petición web —eso lo prohibe `Aplicacion`, y con
+razón—, y sin base de pruebas el caso 19 habría estado adjudicando premios de
+verdad. La salida es una variable de entorno, `SORTEOS_CONFIG`, que
+`Aplicacion::config()` lee **al arrancar el proceso**: Apache la recibe por `SetEnv`
+y elige el fichero antes de que haya conexión con la base. Con eso, la aplicación
+sigue sin tener forma de cambiar de base desde una petición, pero el servidor se
+arranca en la base de pruebas.
+
+La variable se resuelve contra la raíz del proyecto y acepta ruta absoluta o
+relativa. Si apunta a algo que no es un fichero, `ErrorConfiguracion` lo dice y
+**no hay vuelta atrás**: es preferible un error ruidoso a una suite que parece
+haber probado `sorteos_test` contra `sorteos`.
+
+**Lo que hace el caso 19, en orden.**
+
+- Dos azafatas reales, cada una con su login por HTTP y **su propia cookie**. No es
+  un detalle: PHP serializa las peticiones de una misma sesión, así que dos
+  peticiones con la misma cookie no se solaparían nunca y la prueba no probaría nada.
+- La consola retiene `bloquearPromocion()` y **no responde a nada** hasta que ha
+  visto dos conexiones esperando en `information_schema.PROCESSLIST` con estado
+  `User lock`. Solo entonces suelta el cerrojo y lee las dos respuestas.
+- Con eso ya se puede contestar la pregunta que el caso 7 no podía: que las dos
+  peticiones estuvieran dentro **a la vez** y no encoladas.
+
+**Las dos mutaciones que se hicieron para comprobar que la prueba muerde.** Una
+prueba de concurrencia que no falla cuando quitas la concurrencia no está probando
+la concurrencia, así que se comprobó las dos veces:
+
+- **Sin cerrojo retenido**, la comprobación de solapamiento falla con cero
+  esperas… y las otras 16 comprobaciones **siguen pasando**. El reparto de premios se
+  cumple igual encolado que en paralelo: por eso la comprobación de solapamiento es
+  la que vale, y las demás no sirven de prueba de nada.
+- **Con una sola cookie para las dos peticiones**, el solapamiento vuelve a fallar y
+  la segunda ni siquiera responde 200. Es el fallo que tendría el caso 19 sin dos
+  sesiones, y existe.
+
+**Avisos para quien siga.**
+
+- El caso 19 toca el `.htaccess` de la raíz para añadir el `SetEnv`, y lo deja como
+  estaba al terminar. Si el proceso muere a tiros (`taskkill`), la línea se queda
+  puesta y **el sitio entero cae** hasta la siguiente ejecución, que la quita al
+  empezar. Eso es intencionado: si el fichero de configuración temporal desapareciera
+  sin quitar el `SetEnv`, Apache arrancaría contra la base de pruebas y una campaña
+  real escribiría sus datos en `sorteos_test`. Un sitio que se cae es un sitio que
+  avisa; uno que escribe donde no debe, no avisa nunca.
+- La configuración temporal se escribe **sin BOM**. Con BOM, Apache responde con una
+  página de error de 192 bytes y el caso falla con un 403 que no explica nada.
+- El `.htaccess` del repositorio está en CRLF. Reescribirlo con LF no rompe Apache
+  pero ensucia el estado del git con 121 líneas que nadie ha escrito, así que el
+  helper reutiliza los finales de línea que encuentra.
+- `tests/_http.php` empieza por `_` a propósito, y el verificador de documentación
+  se salta los ficheros así. No es una excusa para no documentarlos: los tiene todos,
+  con `@param`, `@return` y `@throws`.
+
+**Cómo se comprueba.** El caso 19 son 18 comprobaciones. La suite son 20 casos y 487
+comprobaciones, y el caso necesita Apache arrancado; sin él, 18 comprobaciones menos
+y un `[OMITIDO]` en la salida.

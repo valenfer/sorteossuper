@@ -54,6 +54,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/inicio.php';
 require_once __DIR__ . '/_escenario.php';
+require_once __DIR__ . '/_http.php';
 
 use App\Core\Aplicacion;
 use App\Services\Tramos;
@@ -4625,6 +4626,434 @@ function caso16(): void
 }
 
 /**
+ * Caso 19: dos participaciones simultaneas por HTTP de verdad.
+ *
+ * ============================================================================
+ * QUE COMPRUEBA Y POR QUE HACE FALTA SI EL CASO 7 YA LO HACE
+ * ============================================================================
+ *
+ * El caso 7 ya comprueba que dos personas no se llevan el mismo premio, y lo
+ * hace con dos procesos de PHP. Lo que no comprueba es lo que pasa por el
+ * camino de verdad: que el servidor atienda las dos peticiones a la vez, que
+ * cada una llegue con su sesion, y que el cerrojo de la campana repartir uno y
+ * solo uno cuando las dos estan dentro al mismo tiempo.
+ *
+ * Por eso D6 pide dos peticiones HTTP simultaneas, y por eso este caso usa
+ * sockets contra el Apache de XAMPP en vez de llamar a metodos. Es el unico
+ * caso de la suite que necesita un servidor de verdad, y por eso se salta a
+ * gritos, y no en silencio, cuando no lo encuentra.
+ *
+ * ============================================================================
+ * COMO SE DEMUESTRA LA SIMULTANEIDAD, QUE NO ES LO OBVIO
+ * ============================================================================
+ *
+ * Lo facil seria mandar las dos peticiones y mirar cuanto tardan. No vale: si el
+ * servidor las atendiera una detras de otra, los repartos saldrian bien y la
+ * prueba pasaria sin haber comprobado nada. Un tiempo de respuesta mas corto
+ * que la suma de los dos no distingue «el servidor las atendio a la vez» de «el
+ * motor hizo esperar a la segunda», que es justo lo que pasa siempre.
+ *
+ * Lo que si lo demuestra es mirar dentro. El motor pide un cerrojo con nombre
+ * por campana antes de adjudicar. Este caso lo retiene desde la consola, manda
+ * las dos peticiones, y cuenta cuantos hilos de MariaDB se quedan esperando ese
+ * cerrojo. Si son dos, las dos peticiones estaban dentro del servidor a la vez,
+ * y eso no es una opinion: es la cuenta de una tabla del servidor de base de
+ * datos. Despues suelta el cerrojo y las dos peticiones continues.
+ *
+ * Que las dos sesiones sean distintas no es un detalle: PHP bloquea una sesion
+ * mientras la tiene ocupada, asi que con la misma cookie la segunda peticion
+ * esperaria en la puerta del servidor y este caso no probaria nada.
+ *
+ * @return void
+ */
+function caso19(): void
+{
+    echo 'Caso 19: dos participaciones simultaneas por HTTP de verdad', PHP_EOL;
+
+    // Se quita cualquier apuntado que hubiera dejado una ejecucion anterior
+    // interrumpida, antes de tocar nada. Si la maquina se apago a mitad del caso
+    // anterior, esto es lo que evita que la aplicacion real siga apuntando a la
+    // base de pruebas.
+    quitarApuntadoDeApache();
+
+    $servidor = localizarServidorWeb();
+
+    if ($servidor === null) {
+        echo '  [OMITIDO] No se ha encontrado ningun servidor web que sirva la aplicacion.', PHP_EOL;
+        echo '            El caso 19 manda dos peticiones HTTP de verdad y sin servidor', PHP_EOL;
+        echo '            no se puede comprobar. Arranca Apache en XAMPP y vuelve a', PHP_EOL;
+        echo '            lanzar la suite. Si la aplicacion se sirve en otra direccion,', PHP_EOL;
+        echo '            se indica con la variable SORTEOS_URL.', PHP_EOL;
+        return;
+    }
+
+    echo '  -> servidor: ' . $servidor['host'] . ':' . $servidor['puerto'] . $servidor['prefijo'],
+        PHP_EOL;
+
+    borrarEscenarioDeAdjudicacion();
+
+    $config = Aplicacion::config();
+    $bdPruebas = (string) $config['bd']['nombre'];
+    $nombreCookie = (string) ($config['sesion']['nombre'] ?? 'SORTEOSSID');
+
+    // Una unidad disponible desde el principio del dia. Por HTTP el momento es
+    // el de verdad, que no se puede elegir como en el caso 7, asi que la unidad
+    // tiene que estar pendiente a cualquier hora en que se lance la suite.
+    $escenario = crearEscenarioDeAdjudicacion(['00:00:00']);
+    $promocionId = (int) $escenario['promocion'];
+
+    $rutaConfig = '';
+    $contrasena = 'prueba-caso19';
+    $nombres = ['caso19-uno', 'caso19-dos'];
+    $sesiones = [];
+    $sockets = [];
+    $respuestas = [];
+
+    // Red de seguridad para el caso de que el caso se interrupta con una
+    // excepcion: el .htaccess se queda apuntando a un fichero que esta a punto de
+    // borrarse, y la aplicacion real dejaria de arrancar. Se registra aqui y no
+    // al final, porque un throw salta directamente al manejador del caso.
+    //
+    // No basta con quitar el SetEnv. Si el caso se cae con las dos peticiones HTTP
+    // dentro del servidor, esas peticiones siguen adjudicando mientras la limpieza
+    // borra la campana, y el borrado se come la clave foranea de una participacion
+    // que acaba de aparecer. Por eso la red cierra antes los sockets, que es lo
+    // que hace que Apache aborte las peticiones, y solo despues borra. Cerrarlos
+    // es lo que hace un navegador al cerrar la pestana, y por eso funciona.
+    register_shutdown_function(static function () use (&$sockets, &$nombres, $promocionId): void {
+        foreach ($sockets as $socket) {
+            if (is_resource($socket)) {
+                fclose($socket);
+            }
+        }
+
+        $sockets = [];
+
+        try {
+            borrarEscenarioDeAdjudicacion();
+        } catch (Throwable $error) {
+            // Se avisa, pero no se relanza: relanzar aqui tapa el fallo real que
+            // todavia no se ha impreso, que es el que hay que arreglar.
+            fwrite(STDERR, '[pruebas] La limpieza del caso 19 no ha podido borrar la campana: '
+                . $error->getMessage() . PHP_EOL);
+        }
+
+        $db = \App\Core\Aplicacion::db();
+
+        foreach ($nombres as $nombre) {
+            $db->ejecutar('DELETE FROM usuarios WHERE nombre = ?', [$nombre]);
+        }
+
+        quitarApuntadoDeApache();
+        borrarConfiguracionDePruebas(
+            sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sorteos-config-pruebas.php'
+        );
+    });
+
+    try {
+        $rutaConfig = escribirConfiguracionDePruebas($bdPruebas);
+        apuntarApacheAConfiguracion($rutaConfig);
+
+        // ---- Dos cuentas de azafata y dos sesiones -------------------------
+        foreach ($nombres as $indice => $nombre) {
+            (new \App\Models\User())->crear(
+                $nombre,
+                $contrasena,
+                \App\Core\Autorizacion::ROL_AZAFATA,
+                'Azafata de prueba del caso 19',
+                $promocionId
+            );
+
+            $sesiones[$indice] = sesionDeAzafata(
+                $servidor,
+                $nombre,
+                $contrasena,
+                $nombreCookie,
+                $promocionId
+            );
+        }
+
+        comprobar(
+            isset($sesiones[0], $sesiones[1]) && $sesiones[0]['cookie'] !== ''
+                && $sesiones[1]['cookie'] !== '',
+            'Las dos azafatas han entrado con sesiones distintas'
+        );
+
+        comprobar(
+            isset($sesiones[0], $sesiones[1]) && $sesiones[0]['cookie'] !== $sesiones[1]['cookie'],
+            'Las dos sesiones son de verdad distintas, y no la misma cookie dos veces'
+        );
+
+        if (!isset($sesiones[0], $sesiones[1])
+            || $sesiones[0]['cookie'] === ''
+            || $sesiones[1]['cookie'] === ''
+            || $sesiones[0]['ruta'] === ''
+            || $sesiones[1]['ruta'] === ''
+        ) {
+            echo '  -> no se ha podido entrar en las dos cuentas, el caso se para aqui', PHP_EOL;
+            return;
+        }
+
+        // ---- La barrera: el cerrojo retenido desde la consola --------------
+        $db = Aplicacion::db();
+
+        comprobar(
+            $db->bloquearPromocion($promocionId, 30),
+            'La consola ha retenido el cerrojo de adjudicacion de la campana'
+        );
+
+        try {
+            // Las dos peticiones se escriben una detras de otra y no se lee
+            // ninguna. Al no leer, la segunda sale mientras la primera sigue
+            // sin contestar, que es lo que las hace simultaneas.
+            foreach ($sesiones as $indice => $sesion) {
+                $socket = abrirSocketWeb((string) $servidor['host'], (int) $servidor['puerto']);
+
+                comprobar(
+                    is_resource($socket),
+                    'Se ha abierto la conexion de la peticion ' . ($indice + 1)
+                );
+
+                if (!is_resource($socket)) {
+                    continue;
+                }
+
+                escribirPeticionWeb(
+                    $socket,
+                    (string) $servidor['host'],
+                    (int) $servidor['puerto'],
+                    // El prefijo se pone aqui a mano porque se llama a
+                    // escribirPeticionWeb() directamente y no a peticionWeb(),
+                    // que es quien lo antepondria.
+                    (string) $servidor['prefijo'] . $sesion['ruta'],
+                    $sesion['campos'],
+                    cabeceraDeCookie($nombreCookie, $sesion['cookie'])
+                );
+
+                $sockets[$indice] = $socket;
+            }
+
+            // Ahora se mira dentro. Se espera poco a proposito: el motor da el
+            // cerrojo por perdido a los cinco segundos y responderia «intente de
+            // nuevo», que es contencion y no un fallo de adjudicacion.
+            $vistas = esperarBloqueoCompartido(2, 2.0);
+
+            comprobar(
+                $vistas >= 2,
+                'Las DOS peticiones estaban dentro del servidor a la vez, esperando el cerrojo',
+                'Se ha visto como mucho ' . $vistas . ' peticion(es) esperando a la vez. Con una '
+                    . 'sola, el servidor las ha atendido encoladas y este caso no demuestra '
+                    . 'nada sobre la simultaneidad.'
+            );
+        } finally {
+            $db->liberarBloqueoPromocion($promocionId);
+        }
+
+        foreach ($sockets as $indice => $socket) {
+            $respuestas[$indice] = leerRespuestaWeb($socket);
+        }
+
+        // ---- Que las dos hayan respondido con la pantalla de resultado ----
+        foreach ($respuestas as $indice => $respuesta) {
+            comprobar(
+                $respuesta['estado'] === 200,
+                'La peticion ' . ($indice + 1) . ' ha contestado con estado 200',
+                $respuesta['caducada']
+                    ? 'La lectura se ha quedado sin respuesta. Suele querer decir que el '
+                        . 'cerrojo se ha retenido mas de lo que el motor aguanta.'
+                    : 'Ha contestado con el estado ' . $respuesta['estado']
+            );
+
+            comprobar(
+                !$respuesta['caducada'],
+                'La peticion ' . ($indice + 1) . ' ha contestado dentro de tiempo'
+            );
+        }
+
+        if (count($respuestas) !== 2) {
+            comprobar(false, 'Sin las dos respuestas no se puede comprobar el reparto');
+            return;
+        }
+
+        $resultados = array_map('resultadoDePantalla', array_column($respuestas, 'cuerpo'));
+
+        comprobarIgual(
+            1,
+            count(array_keys($resultados, 'premio', true)),
+            'De las dos participaciones por HTTP, solo UNA recibe el premio'
+        );
+
+        comprobarIgual(
+            1,
+            count(array_keys($resultados, 'sin_premio', true)),
+            'La otra se queda sin premio por HTTP, en vez de desaparecer'
+        );
+
+        // ---- Y la tabla de unidades lo confirma, como en el caso 7 ----------
+        $estados = (new \App\Models\UnidadPremio())->contarPorEstado($promocionId);
+        comprobarIgual(1, $estados['entregada'] ?? 0, 'Hay exactamente UNA unidad entregada, la que habia');
+        comprobarIgual(0, $estados['programada'] ?? 0, 'No queda ninguna unidad programada');
+
+        $porResultado = (new \App\Models\Participacion())->contarPorResultado($promocionId);
+        comprobarIgual(1, $porResultado['premio'] ?? 0, 'Solo una participacion queda con resultado «premio»');
+        comprobarIgual(
+            1,
+            $porResultado['sin_premio'] ?? 0,
+            'La otra queda con resultado «sin premio», y ninguna con «rechazada»'
+        );
+        comprobarIgual(
+            0,
+            $porResultado['rechazada'] ?? 0,
+            'Ninguna de las dos se ha rechazado, que seria otra cosa distinta'
+        );
+
+        $claves = (int) $db->valor(
+            'SELECT COUNT(DISTINCT clave_idempotencia) FROM participaciones WHERE promocion_id = ?',
+            [$promocionId]
+        );
+
+        comprobarIgual(2, $claves, 'Las dos participaciones vienen de dos intentos distintos');
+    } finally {
+        quitarApuntadoDeApache();
+        borrarConfiguracionDePruebas($rutaConfig);
+
+        foreach ($sockets as $socket) {
+            if (is_resource($socket)) {
+                fclose($socket);
+            }
+        }
+
+        borrarEscenarioDeAdjudicacion();
+
+        // Las cuentas se borran aqui y no en borrarEscenarioDeAdjudicacion porque
+        // la tabla de usuarios no cuelga de la campana: al borrarla, su
+        // promocion_id se queda a NULL y las cuentas se quedarian colgando en la
+        // base de pruebas para siempre.
+        $db = Aplicacion::db();
+
+        foreach ($nombres as $nombre) {
+            $db->ejecutar('DELETE FROM usuarios WHERE nombre = ?', [$nombre]);
+        }
+    }
+}
+
+/**
+ * Entra por HTTP como una azafata y deja preparada la peticion de participación.
+ *
+ * Hace los tres pasos de un navegador: pedir el formulario de acceso, mandarlo
+ * con el nombre y la contrasena, y pedir despues el formulario de participación.
+ * Del ultimo se queda el token y la clave de intento tal y como los ha enviado
+ * el servidor.
+ *
+ * @param array<string, mixed> $servidor    Host, puerto y prefijo, como
+ *                                          devuelve localizarServidorWeb().
+ * @param string               $nombre      Nombre de acceso de la azafata.
+ * @param string               $contrasena  Contrasena de la azafata.
+ * @param string               $nombreCookie Nombre de la cookie de sesion.
+ * @param int                  $promocionId Campana a la que esta asignada.
+ *
+ * @return array<string, mixed> «cookie» con el valor de la sesion, «ruta» con
+ *                              la ruta de participación y «campos» con lo que
+ *                              hay que mandar.
+ */
+function sesionDeAzafata(
+    array $servidor,
+    string $nombre,
+    string $contrasena,
+    string $nombreCookie,
+    int $promocionId
+): array {
+    $vacio = ['cookie' => '', 'ruta' => '', 'campos' => []];
+
+    $acceso = peticionWeb($servidor, '/login');
+
+    if ($acceso['estado'] !== 200) {
+        return $vacio;
+    }
+
+    $campos = camposDeFormulario($acceso['cuerpo']);
+
+    if (!isset($campos['csrf_token'])) {
+        return $vacio;
+    }
+
+    // La cookie de la sesion se arrastra al enviar el acceso. Sin ella, la
+    // peticion llega sin sesion, el token no tiene contra que compararse y el
+    // acceso se responde con un 403 que no dice nada de por que.
+    $cookiePrevia = valorDeCookie($acceso['cabeceras'], $nombreCookie);
+
+    $campos['nombre'] = $nombre;
+    $campos['contrasena'] = $contrasena;
+
+    $entrada = peticionWeb(
+        $servidor,
+        '/login',
+        [
+            'campos' => $campos,
+            'cookie' => cabeceraDeCookie($nombreCookie, $cookiePrevia),
+        ]
+    );
+
+    // La sesion se toma de la respuesta del acceso y no de la del formulario: al
+    // entrar se cambia el identificador de sesion, para que una cookie puesta a
+    // mano antes de entrar no sirva de nada.
+    $cookie = valorDeCookie($entrada['cabeceras'], $nombreCookie);
+
+    if ($cookie === '') {
+        return $vacio;
+    }
+
+    $ruta = '/azafata/promociones/' . $promocionId . '/participar';
+    $formulario = peticionWeb(
+        $servidor,
+        $ruta,
+        ['cookie' => cabeceraDeCookie($nombreCookie, $cookie)]
+    );
+
+    if ($formulario['estado'] !== 200) {
+        return $vacio;
+    }
+
+    $camposParticipacion = camposDeFormulario($formulario['cuerpo']);
+
+    // Si no hay token ni clave de intento no se ha llegado al formulario de
+    // participación, sino a otra pagina. Lo mas probable es que el acceso haya
+    // fallado y esto sea la pantalla de acceso otra vez.
+    if (!isset($camposParticipacion['csrf_token'], $camposParticipacion['idempotencia'])) {
+        return $vacio;
+    }
+
+    return ['cookie' => $cookie, 'ruta' => $ruta, 'campos' => $camposParticipacion];}
+
+/**
+ * Deduce el resultado de una participación de la pantalla que ha devuelto.
+ *
+ * No mira la base de datos, que es lo que ya comprueban las comprobaciones de
+ * despues: mira el HTML, para comprobar que lo que sale por HTTP dice lo que
+ * veria la azafata en la tablet.
+ *
+ * @param string $html Cuerpo de la respuesta.
+ *
+ * @return string «premio», «sin_premio», «rechazada» o «desconocido».
+ */
+function resultadoDePantalla(string $html): string
+{
+    if (strpos($html, 'Enhorabuena') !== false) {
+        return 'premio';
+    }
+
+    if (strpos($html, 'Gracias por participar') !== false) {
+        return 'sin_premio';
+    }
+
+    if (strpos($html, 'no se ha registrado') !== false) {
+        return 'rechazada';
+    }
+
+    return 'desconocido';
+}
+
+/**
  * Lista de casos disponibles, indexada por numero.
  *
  * @var array<int, callable():void>
@@ -4649,6 +5078,7 @@ const PRUEBAS = [
     16 => 'caso16',
     17 => 'caso17',
     18 => 'caso18',
+    19 => 'caso19',
 ];
 
 // -----------------------------------------------------------------------------

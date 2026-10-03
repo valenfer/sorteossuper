@@ -99,10 +99,26 @@ participaciones, la de cola de correos y la de auditoría. El modelo de datos es
 el motor que usa las cuatro tablas centrales, el panel que las configura, la
 pantalla que las usa y el worker que manda el correo.
 
-**Lo que no hay todavía.** Nada de lo que estaba en la lista abierta: la prueba de
-concurrencia por HTTP de D6 existe y es el caso 19, con su apartado en el registro
-de hitos. Lo único que queda por decidir es cuál es el siguiente hito, y eso lo
-decide el promotor.
+**Hecho (hito 7).** La purga de datos personales: la regla de elegibilidad en un
+solo sitio, el vaciado de `participaciones`, `correos` e `intentos_rechazados` sin
+borrar la fila, los correos pendientes a salvo y un asiento de auditoría por
+campaña.
+
+**Hecho (hito 8).** La prueba de concurrencia por HTTP de verdad, que es el caso 19.
+
+**Hecho (hito 9).** Las imágenes: `Imagenes` probado de punta a punta, `uploads`
+sirviendo y sin ejecutar, y los banners pintados en las tres pantallas.
+
+**Lo que no hay todavía.** El caso de aceptación 2 del apartado 10 —editar la hora
+de una unidad, añadir otra y borrar una, con las diferencias mostradas y
+confirmación antes de actualizar los totales— está **a medio hacer**, y es lo único
+que queda de los nueve casos. `Calendario::crear()` y `Calendario::mover()` existen y
+funcionan, pero **nadie los llama**: no hay ruta, ni acción de controlador, ni
+botón en la pantalla del calendario. Solo `retirar()` está conectado de punta a
+punta. Las diferencias con el plan ya se muestran en la tabla, y el botón de generar
+y el de retirar ya piden confirmación; lo que falta es poder añadir una unidad a mano
+y cambiarle la hora. Después de eso, lo que quede lo decide el promotor, y puede que
+sea una decisión de producto y no una tarea técnica.
 
 **En la raíz hay un `bbdd.png` con un diagrama de la base de datos hecho a
 mano.** Se versiona desde el hito 3, con la autorización del promotor, porque es
@@ -128,11 +144,11 @@ con `origin/master`.
 1. **Nada pendiente del hito 9.** `Imagenes` está probado y las tres pantallas pintan
    los banners. La suite son 21 casos y 546 comprobaciones, y las tres comprobaciones
    de la sección 2 pasan.
-2. **El siguiente hito está por decidir, y esa es la decisión que hay que tomar
-   primero.** No hay nada de código pendiente: lo único abierto es qué se hace ahora,
-   y la respuesta no está escrita en ningún sitio porque es una decisión del
-   promotor, no una tarea técnica. Cuando la haya, este apartado tiene que decir
-   cuál es, y no basta con decir «el siguiente».
+2. **El siguiente hito está acotado y es el caso de aceptación 2.** Faltan las rutas
+   y los botones para **añadir una unidad a mano y moverle la hora**; el servicio ya
+   está escrito (`Calendario::crear()` y `Calendario::mover()`) y no lo llama nadie.
+   Cerrado eso, los nueve casos del apartado 10 tienen su camino completo, y lo que
+   siga será una decisión del promotor, no una tarea técnica.
 
 **Antes de escribir código nuevo, tres avisos.**
 

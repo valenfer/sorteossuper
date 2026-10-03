@@ -134,8 +134,8 @@ documento, que sea esto.
 `origin/master`, y las decisiones D4, D6 y D19 están confirmadas. No hay nada a
 medias: el árbol de trabajo está limpio y las tres comprobaciones pasan. El commit de
 D19 es `c6e91c4`, el de D4 es `dbf2fdf`, el del hito 7 es `51fec02`, el del hito 8,
-que es D6, es `cb9b714`, el del hito 9 es el de `Imagenes` y el del hito 10 es el de
-`caso21`. `master` está sincronizado con `origin/master`.
+que es D6, es `cb9b714`, el del hito 9 es `311b23d` y el del hito 10 es `cf29f14`.
+`master` está sincronizado con `origin/master`.
 
 **Lo siguiente, por este orden.**
 
@@ -1129,7 +1129,7 @@ La corrección está en los dos ficheros, y los dos hacen falta:
 comprobaciones, y la parte de Apache necesita el servidor; sin él, 9 comprobaciones
 menos y un `[OMITIDO]` en la salida.
 
-### Hito 10 — El calendario se revisa a mano
+### Hito 10 — El calendario se revisa a mano (`cf29f14`)
 
 **El fallo que había debajo.** `Calendario::crear()` y `Calendario::mover()` estaban
 escritos, documentados y probados por su propio código desde el hito 3, y **no los

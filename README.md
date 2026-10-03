@@ -338,7 +338,7 @@ sola conexión no habría competencia que medir.
 | `/admin/promociones/{id}/editar` | Los datos generales, que no cambian el estado. |
 | `/admin/promociones/{id}/premios` | El catálogo de premios, con su foto. |
 | `/admin/promociones/{id}/tramos` | Los tramos con su hora y su fecha, y cuántas unidades de cada premio van en cada uno. |
-| `/admin/promociones/{id}/calendario` | Generar el reparto y ver el plan frente a lo generado. |
+| `/admin/promociones/{id}/calendario` | Generar el reparto y ver el plan frente a lo generado. Desde aquí se añade una unidad suelta, se le cambia la hora o el tramo y se retira. |
 | `/admin/promociones/{id}/formulario` | Los campos que rellena la clienta, con su orden. |
 | `/admin/promociones/{id}/reglas` | Una por persona, por ticket, códigos de acceso y códigos postales. |
 | `/admin/promociones/{id}/ajustes` | Correo, modo simulación y días de retención. |
@@ -588,6 +588,27 @@ una prueba de mirar dos veces si el mismo caso da lo mismo.
 Las pruebas lo cubren con el caso 20, y antes de darlo por bueno se comprobó que la
 prueba muerde: volviendo a meter `uploads` en la lista de la raíz, o quitando el
 `SetHandler none`, el caso falla.
+
+**Terminado (hito 10).** El calendario se revisa a mano: añadir, mover y retirar.
+
+- **`Calendario::crear()` y `Calendario::mover()` ya no son código muerto.** Llevaban
+  desde el hito 3 escritos y sin que nadie los llamara: el caso de aceptación 2 pide
+  tres revisiones del calendario y la pantalla solo tenía la de retirar. Ahora las
+  tres van por POST, con token y con confirmación.
+- **La fecha la pone el tramo.** El formulario de añadir pide tramo y hora, nunca
+  fecha, porque pedir las dos cosas deja abierta la combinación imposible de un tramo
+  del martes con la fecha del jueves. El controlador carga el tramo y le pasa su
+  fecha al servicio, así que esa combinación ni se puede escribir.
+- **Solo se mueven unidades programadas.** El botón de mover aparece exactamente en
+  esas filas, y el servicio lo vuelve a exigir: una unidad entregada ya tiene
+  participación, adjudicación y código de reclamación, y moverla dejaría las tres
+  diciendo cosas distintas.
+- **Un error no se disfraza de éxito.** Si el servicio rechaza la operación, la
+  pantalla se repinta con el mensaje al lado del campo y con lo que se escribió, y no
+  se guarda el «Unidad retirada» que antes salía encima.
+
+Las pruebas lo cubren con el caso 21, que además comprueba que hay exactamente un
+formulario de mover por cada unidad programada.
 
 **Cómo saber si está sano.** Con el servidor arrancado:
 

@@ -5619,6 +5619,456 @@ function registrarLimpiezaCaso20(callable $limpieza): void
 }
 
 /**
+ * Caso 21: el calendario se revisa a mano, que es lo que pedia el caso 2.
+ *
+ * ============================================================================
+ * POR QUE ESTE CASO EXISTE
+ * ============================================================================
+ *
+ * `Calendario::crear()` y `Calendario::mover()` llevan desde el hito 3 escritos,
+ * probados por su codigo y sin que **nadie los llame**: no habia ruta, ni accion de
+ * controlador, ni boton. Solo `retirar()` estaba conectado de punta a punta. El
+ * apartado 4.6 pide anadir, mover y retirar unidades, y el panel solo permitia una
+ * de las tres, asi que la revision del calendario era en teoria una pantalla y en
+ * la practica no se podia hacer.
+ *
+ * Lo que se comprueba aqui no es que el servicio funcione —eso ya lo hacia— sino
+ * que las tres operaciones estan **conectadas**: hay ruta, hay boton, hay token, y
+ * el resultado se ve en la tabla de la misma pantalla. Un servicio correcto sin
+ * ruta es codigo muerto, y es exactamente lo que havia.
+ *
+ * ============================================================================
+ * LA FECHA LA PONE EL TRAMO, Y POR QUE
+ * ============================================================================
+ *
+ * El formulario pide un tramo y una hora, y no una fecha. La combinacion imposible
+ * —el tramo del martes con la fecha del jueves— no se puede escribir, y esa es la
+ * forma de que no llegue al servicio. Aun asi se manda a proposito una fecha falsa
+ * en el POST para comprobar que **se ignora**: si alguien anadiera un campo de
+ * fecha al formulario, la prueba lo notaria, porque la unidad caeria en el dia
+ * equivocado y nadie se enteraria hasta que la campana repartiera a destiempo.
+ *
+ * ============================================================================
+ * LO QUE NO SE PUEDE MOVER, Y POR QUE ES LA MITAD DE LA PRUEBA
+ * ============================================================================
+ *
+ * Solo se mueven unidades programadas. Una unidad entregada ya tiene
+ * participacion, adjudicacion y codigo de reclamacion, y moverla dejaria las tres
+ * cosas diciendo cosas distintas: un correo anunciando un premio a una hora que ya
+ * no es la de la fila. Se comprueba en las dos direcciones: que el servicio
+ * rechaza moverla, y que la pantalla **no ofrece el boton** de mover en una fila
+ * que ya no esta programada. Lo segundo es lo que evita el error de verdad, porque
+ * un boton que no deberia estar es un error que el usuario ve y el servicio no
+ * puede evitar.
+ *
+ * @return void
+ */
+function caso21(): void
+{
+    echo 'Caso 21: el calendario se anade, se mueve y se retira a mano', PHP_EOL;
+
+    $escenario = null;
+
+    try {
+        $escenario = crearEscenarioDePanel([
+            'premios' => 2,
+            'tramos'  => 2,
+            'sufijo'  => 'cal21',
+        ]);
+
+        $id = (int) $escenario['promocion'];
+        $tramos = array_map('intval', $escenario['tramos']);
+        $tipos = array_map('intval', $escenario['tipos']);
+        $otro = crearEscenarioDePanel([
+            'premios' => 1,
+            'tramos'  => 1,
+            'sufijo'  => 'cal21-ajena',
+        ]);
+
+        $calendario = new \App\Services\Calendario();
+        $generado = $calendario->generar($id);
+
+        comprobar(
+            ($generado['generado'] ?? false) === true && (int) ($generado['unidades'] ?? 0) === 8,
+            'El generador ha repartido 8 unidades: dos premios por dos tramos',
+            'informe: ' . json_encode($generado, JSON_UNESCAPED_UNICODE)
+        );
+
+        // =====================================================================
+        // 1. LAS TRES OPERACIONES ESTAN CONECTADAS
+        // =====================================================================
+        $html = htmlDeAccion('ControladorCampana', 'calendario', ['id' => $id]);
+
+        comprobarContiene(
+            $html,
+            '/calendario/unidad',
+            'La pantalla del calendario ofrece el formulario de anadir una unidad'
+        );
+        comprobarContiene(
+            $html,
+            'Anadir unidad',
+            'Y el boton se llama asi, no «guardar»'
+        );
+        comprobarContiene(
+            $html,
+            '/mover',
+            'Y cada unidad programada trae su formulario para moverla'
+        );
+
+        // El numero de botones de mover tiene que ser el de unidades programadas.
+        // Es la comprobacion que detecta el fallo en el otro sentido: un boton de
+        // mover en una fila entregada, o ninguno en una programada.
+        $programadas = array_values(array_filter(
+            $calendario->listar($id),
+            static fn (array $u): bool => (string) $u['estado'] === \App\Models\UnidadPremio::ESTADO_PROGRAMADA
+        ));
+        comprobarIgual(
+            count($programadas),
+            substr_count($html, 'class="mover-unidad"'),
+            'Hay un formulario de mover por cada unidad programada, ni uno mas'
+        );
+
+        // =====================================================================
+        // 2. ANADIR UNA UNIDAD
+        // =====================================================================
+        $antes = $calendario->contar($id);
+
+        // La fecha del POST es falsa y a proposito: el tramo manda. Y la hora, 12:30,
+        // cae dentro del tramo, que en este escenario empieza a las 11:00.
+        limpiarPeticion();
+        enviarFormulario(
+            ['tramo_id' => $tramos[0], 'premio_id' => $tipos[0], 'hora' => '12:30', 'fecha' => '2001-01-01'],
+            '/admin/promociones/' . $id . '/calendario/unidad'
+        );
+        htmlDeAccion('ControladorCampana', 'crearUnidad', ['id' => $id]);
+
+        comprobarIgual(
+            $antes + 1,
+            $calendario->contar($id),
+            'La accion de anadir deja una unidad mas en el calendario'
+        );
+
+        $anadidas = array_values(array_filter(
+            $calendario->listar($id),
+            static fn (array $u): bool => substr((string) $u['inicio'], 11, 5) === '12:30'
+        ));
+        comprobarIgual(1, count($anadidas), 'La unidad anadida es la unica de las 12:30');
+
+        $nueva = $calendario->buscar((int) ($anadidas[0]['id'] ?? 0));
+
+        comprobar(
+            $nueva !== null && (string) $nueva['estado'] === \App\Models\UnidadPremio::ESTADO_PROGRAMADA,
+            'Y la unidad anadida nace programada, que es lo unico que se puede mover luego'
+        );
+        comprobar(
+            $nueva !== null && substr((string) $nueva['inicio'], 11, 5) === '12:30',
+            'Con la hora que se escribio',
+            'inicio: ' . ($nueva === null ? 'no existe' : (string) $nueva['inicio'])
+        );
+        comprobar(
+            $nueva !== null && substr((string) $nueva['inicio'], 0, 10) === date('Y-m-d'),
+            'Y con la fecha del tramo, no con la del POST, que era de 2001',
+            'inicio: ' . ($nueva === null ? 'no existe' : (string) $nueva['inicio'])
+        );
+
+        limpiarPeticion();
+
+        // ---- Y la pantalla avisa de que el reparto ya no es el del plan ------
+        // Esto es lo que pide el caso 2: al editar a mano, el panel tiene que
+        // decir que el calendario se ha separado del plan, y no Limitarselo a
+        // aceptarlo en silencio.
+        $desajustes = array_values(array_filter(
+            (new \App\Services\ConfiguracionPromocion())->compararPlanYCalendario($id),
+            static fn (array $fila): bool => (bool) $fila['cambia']
+        ));
+        comprobar(
+            $desajustes !== [],
+            'Anadir una unidad a mano separa el calendario del plan, y la comparacion lo detecta'
+        );
+
+        $html = htmlDeAccion('ControladorCampana', 'calendario', ['id' => $id]);
+        comprobarContiene(
+            $html,
+            'Plan frente a calendario',
+            'Y la pantalla lo enseña, en vez de dejar que se note al repartir'
+        );
+        comprobarContiene(
+            $html,
+            'Sobran 1',
+            'Con quantas unidades sobran de mas en el tramo tocado'
+        );
+        comprobarContiene(
+            $html,
+            '12:30',
+            'Incluida la unidad anadida a mano, que sale en la tabla'
+        );
+
+        // ---- Una hora antes del tramo tampoco vale --------------------------
+        $antes = $calendario->contar($id);
+        comprobarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->crear($id, $tramos[0], $tipos[0], date('Y-m-d'), '10:30'),
+            'Una unidad a las 10:30, con un tramo que empieza a las 11:00, se rechaza'
+        );
+        comprobarIgual(
+            $antes,
+            $calendario->contar($id),
+            'Y no se ha creado ninguna fila por el intento'
+        );
+
+        // ---- Una hora fuera del tramo no crea nada --------------------------
+        $antes = $calendario->contar($id);
+        comprobarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->crear($id, $tramos[0], $tipos[0], date('Y-m-d'), '23:30'),
+            'Una unidad a las 23:30, con un tramo que acaba a las 23:00, se rechaza'
+        );
+        comprobarIgual(
+            $antes,
+            $calendario->contar($id),
+            'Y no se ha creado ninguna fila por el intento de las 23:30'
+        );
+
+        // ---- Un tramo de otra campana tampoco ------------------------------
+        comprobarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->crear($id, (int) $otro['tramos'][0], $tipos[0], date('Y-m-d'), '10:00'),
+            'No se puede anadir una unidad a un tramo de otra campana'
+        );
+        comprobarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->crear($id, $tramos[0], (int) $otro['tipos'][0], date('Y-m-d'), '10:00'),
+            'Ni con un premio de otra campana'
+        );
+
+        // ---- Un premio desactivado no admite unidades nuevas ---------------
+        // El HTML se pide antes de volver a activarlo: si se pintara despues, la
+        // comprobacion del desplegable pasaria siempre y no probaria nada.
+        \App\Core\Aplicacion::db()->ejecutar(
+            'UPDATE tipos_premio SET activo = 0 WHERE id = ?',
+            [$tipos[1]]
+        );
+        comprobarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->crear($id, $tramos[0], $tipos[1], date('Y-m-d'), '11:00'),
+            'Un premio desactivado no admite unidades nuevas'
+        );
+
+        // El desplegable no ofrece los desactivados, en vez de ofrecerlos y dejar
+        // que el servicio los rechace despues de haber escrito la hora. Se mira
+        // solo dentro del desplegable: el nombre del premio aparece legitimamente
+        // en la tabla de unidades de mas abajo.
+        $html = htmlDeAccion('ControladorCampana', 'calendario', ['id' => $id]);
+        comprobar(
+            preg_match('#<select id="anadir-premio".*?</select>#s', $html, $desplegable) === 1,
+            'Se encuentra el desplegable de premios del formulario de anadir'
+        );
+        comprobarContiene(
+            (string) ($desplegable[0] ?? ''),
+            'Premio de pruebas cal21 1',
+            'Y ofrece el premio activo'
+        );
+        comprobarNoContiene(
+            (string) ($desplegable[0] ?? ''),
+            'Premio de pruebas cal21 2',
+            'Y no ofrece el premio que se acaba de desactivar'
+        );
+
+        // Y con el premio ya activo otra vez, vuelve a aparecer: la comprobacion
+        // anterior no se podia deber a un desplegable siempre vacio.
+        \App\Core\Aplicacion::db()->ejecutar(
+            'UPDATE tipos_premio SET activo = 1 WHERE id = ?',
+            [$tipos[1]]
+        );
+        $html = htmlDeAccion('ControladorCampana', 'calendario', ['id' => $id]);
+        comprobarContiene($html, 'Premio de pruebas cal21 2', 'Al reactivarlo, el desplegable lo vuelve a ofrecer');
+
+        // =====================================================================
+        // 3. MOVER UNA UNIDAD
+        // =====================================================================
+        $movible = $programadas[0];
+        $unidadId = (int) $movible['id'];
+
+        limpiarPeticion();
+        enviarFormulario(
+            ['tramo_id' => $tramos[1], 'hora' => '15:45', 'fecha' => '2001-01-01'],
+            '/admin/promociones/' . $id . '/calendario/' . $unidadId . '/mover'
+        );
+        htmlDeAccion('ControladorCampana', 'moverUnidad', ['id' => $id, 'unidad' => $unidadId]);
+
+        $movida = $calendario->buscar($unidadId);
+        comprobar(
+            $movida !== null && (int) $movida['tramo_id'] === $tramos[1],
+            'Mover cambia la unidad de tramo',
+            'tramo: ' . ($movida === null ? 'no existe' : (string) $movida['tramo_id'])
+        );
+        comprobar(
+            $movida !== null && substr((string) $movida['inicio'], 11, 5) === '15:45',
+            'Y a la hora escrita, dentro del tramo de destino',
+            'inicio: ' . ($movida === null ? 'no existe' : (string) $movida['inicio'])
+        );
+        comprobar(
+            $movida !== null && (string) $movida['estado'] === \App\Models\UnidadPremio::ESTADO_PROGRAMADA,
+            'Y sigue programada: mover no entrega ni adjudica'
+        );
+
+        // ---- Un movimiento fallido se repinta con lo que se escribio --------
+        // Si la fila volviera con la hora de antes, habria que repetir el trabajo
+        // y volver a fallar, y el error se veria en un campo que ya no es el que
+        // se escribio.
+        limpiarPeticion();
+        enviarFormulario(
+            ['tramo_id' => $tramos[0], 'hora' => '23:30'],
+            '/admin/promociones/' . $id . '/calendario/' . $unidadId . '/mover'
+        );
+        $html = htmlDeAccion('ControladorCampana', 'moverUnidad', ['id' => $id, 'unidad' => $unidadId]);
+
+        // Se mira el campo de esa fila y no la pagina entera: el formulario de anadir
+        // tambien conserva la hora que se escribio, y por eso hay dos campos con
+        // 23:30 en el HTML.
+        comprobar(
+            preg_match(
+                '/id="mover-hora-' . $unidadId . '"[^>]*value="23:30"/',
+                $html
+            ) === 1,
+            'La fila que no se pudo mover vuelve con la hora que se escribio'
+        );
+        comprobarNoContiene(
+            $html,
+            'Notice:',
+            'Y el repintado sale sin avisos de PHP'
+        );
+
+        limpiarPeticion();
+
+        // ---- Un destino invalido deja la unidad donde estaba ---------------
+        $antesDeMover = (string) ($calendario->buscar($unidadId)['inicio'] ?? '');
+        comprobarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->mover($unidadId, $tramos[0], date('Y-m-d'), '23:30', $id),
+            'Mover a una hora que no cae en el tramo de destino se rechaza'
+        );
+        comprobarIgual(
+            $antesDeMover,
+            (string) ($calendario->buscar($unidadId)['inicio'] ?? ''),
+            'Y la unidad se queda donde estaba, sin quedar a medio cambiar'
+        );
+
+        comprobarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->mover($unidadId, (int) $otro['tramos'][0], date('Y-m-d'), '10:00', $id),
+            'Mover a un tramo de otra campana se rechaza'
+        );
+
+        // ---- Una unidad de otra campana no se mueve ------------------------
+        // El generador necesita que su campana tenga unidades propias, porque si
+        // no el servicio no tendria nada que rechazar y la prueba pasaria sin
+        // haber probado nada.
+        $calendario->generar((int) $otro['promocion']);
+        comprobarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->mover(
+                (int) $calendario->listar((int) $otro['promocion'])[0]['id'],
+                $tramos[0],
+                date('Y-m-d'),
+                '12:30',
+                $id
+            ),
+            'Una unidad que no es de esta campana no se mueve'
+        );
+
+        // =====================================================================
+        // 4. LO QUE YA NO SE PUEDE MOVER: RETIRADA
+        // =====================================================================
+        $retirada = (int) $movible['id'];
+        $calendario->retirar($retirada, $id, 'prueba del caso 21');
+        $anulada = $calendario->buscar($retirada);
+
+        comprobar(
+            $anulada !== null && (string) $anulada['estado'] === \App\Models\UnidadPremio::ESTADO_ANULADA,
+            'Retirar deja la unidad anulada y no la borra, que es lo que hace que el historial cuadre'
+        );
+        comprobarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->mover($retirada, $tramos[0], date('Y-m-d'), '10:00', $id),
+            'Una unidad anulada ya no se puede mover'
+        );
+
+        // Y la pantalla se queda sin el boton de mover en esa fila, que es la
+        // mitad del contrato: el servicio rechaza, pero el boton no deberia
+        // haberse ofrecido.
+        $html = htmlDeAccion('ControladorCampana', 'calendario', ['id' => $id]);
+        comprobarNoContiene(
+            $html,
+            'id="mover-' . $retirada . '"',
+            'La fila de la unidad anulada no ofrece ni el desplegable ni el boton de mover'
+        );
+        comprobarNoContiene(
+            $html,
+            '/calendario/' . $retirada . '/retirar',
+            'Y tampoco ofrece retirarla otra vez, porque ya esta anulada'
+        );
+
+        // =====================================================================
+        // 5. EL ERROR DE RETIRAR NO DICE QUE HA IDO BIEN
+        // =====================================================================
+        // El fallo era que el aviso de exito se guardaba tambien cuando la
+        // operacion habia fallado: el administrador leia «Unidad retirada» encima
+        // del error que decia lo contrario. Se prueba con una unidad que llega a
+        // su hora sin poder adjudicarse, porque es un estado que el panel teaches
+        // de verdad y que el servicio no admite para retirar.
+        $noEntregada = (int) $calendario->listar($id)[1]['id'];
+        \App\Core\Aplicacion::db()->ejecutar(
+            'UPDATE unidades_premio SET estado = ? WHERE id = ?',
+            [\App\Models\UnidadPremio::ESTADO_NO_ENTREGADA, $noEntregada]
+        );
+
+        limpiarPeticion();
+        enviarFormulario(
+            ['motivo' => 'prueba del caso 21'],
+            '/admin/promociones/' . $id . '/calendario/' . $noEntregada . '/retirar'
+        );
+
+        // No hay que coger Redirigir: desde la consola Controlador::redirigir() solo
+        // guarda un aviso y devuelve, porque header() ahi no hace nada util.
+        htmlDeAccion('ControladorCampana', 'retirarUnidad', ['id' => $id, 'unidad' => $noEntregada]);
+
+        comprobar(
+            \App\Core\Vista::aviso('error') !== '',
+            'Retirar una unidad que ya no esta programada avisa de que no se puede'
+        );
+        comprobarNoContiene(
+            \App\Core\Vista::aviso('exito'),
+            'Unidad retirada',
+            'Y no dice encima que se ha retirado, que era el fallo'
+        );
+        comprobar(
+            (string) ($calendario->buscar($noEntregada)['estado'] ?? '') === \App\Models\UnidadPremio::ESTADO_NO_ENTREGADA,
+            'Y la unidad se queda como estaba'
+        );
+
+        limpiarPeticion();
+        borrarEscenarioDePanel($id);
+        borrarEscenarioDePanel((int) $otro['promocion']);
+    } catch (Throwable $error) {
+        // Si el caso muere a mitad, la red de seguridad deja la base como estaba.
+        foreach ([[$escenario, 'borrarEscenarioDePanel']] as $par) {
+            if ($par[0] === null) {
+                continue;
+            }
+
+            try {
+                $par[1]((int) $par[0]['promocion']);
+            } catch (Throwable $ignorado) {
+                fwrite(STDERR, '[pruebas] No se ha podido limpiar: ' . $ignorado->getMessage() . PHP_EOL);
+            }
+        }
+
+        throw $error;
+    }
+}
+
+/**
  * Lista de casos disponibles, indexada por numero.
  *
  * @var array<int, callable():void>
@@ -5645,6 +6095,7 @@ const PRUEBAS = [
     18 => 'caso18',
     19 => 'caso19',
     20 => 'caso20',
+    21 => 'caso21',
 ];
 
 // -----------------------------------------------------------------------------

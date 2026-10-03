@@ -109,16 +109,14 @@ campaña.
 **Hecho (hito 9).** Las imágenes: `Imagenes` probado de punta a punta, `uploads`
 sirviendo y sin ejecutar, y los banners pintados en las tres pantallas.
 
-**Lo que no hay todavía.** El caso de aceptación 2 del apartado 10 —editar la hora
-de una unidad, añadir otra y borrar una, con las diferencias mostradas y
-confirmación antes de actualizar los totales— está **a medio hacer**, y es lo único
-que queda de los nueve casos. `Calendario::crear()` y `Calendario::mover()` existen y
-funcionan, pero **nadie los llama**: no hay ruta, ni acción de controlador, ni
-botón en la pantalla del calendario. Solo `retirar()` está conectado de punta a
-punta. Las diferencias con el plan ya se muestran en la tabla, y el botón de generar
-y el de retirar ya piden confirmación; lo que falta es poder añadir una unidad a mano
-y cambiarle la hora. Después de eso, lo que quede lo decide el promotor, y puede que
-sea una decisión de producto y no una tarea técnica.
+**Hecho (hito 10).** El calendario se revisa a mano: se añade una unidad suelta, se
+le cambia la hora o el tramo y se retira, todo por POST con token y con confirmación,
+y la tabla avisa de en cuanto el calendario se separa del plan. Ver el registro de
+hitos, al final.
+
+**Lo que no hay todavía.** Nada de los nueve casos de aceptación del apartado 10
+está pendiente: el 2 se cerró en el hito 10. Lo que queda por delante son decisiones
+de producto del promotor, no tareas técnicas. Ver el registro de hitos, al final.
 
 **En la raíz hay un `bbdd.png` con un diagrama de la base de datos hecho a
 mano.** Se versiona desde el hito 3, con la autorización del promotor, porque es
@@ -132,23 +130,23 @@ que romper».
 Este es el resumen para retomar el trabajo. Si solo se lee una cosa de todo el
 documento, que sea esto.
 
-**Punto exacto en el que está.** Los hitos 0 a 9 están cerrados y subidos a
+**Punto exacto en el que está.** Los hitos 0 a 10 están cerrados y subidos a
 `origin/master`, y las decisiones D4, D6 y D19 están confirmadas. No hay nada a
 medias: el árbol de trabajo está limpio y las tres comprobaciones pasan. El commit de
 D19 es `c6e91c4`, el de D4 es `dbf2fdf`, el del hito 7 es `51fec02`, el del hito 8,
-que es D6, es `cb9b714` y el del hito 9 es el de `Imagenes`. `master` está sincronizado
-con `origin/master`.
+que es D6, es `cb9b714`, el del hito 9 es el de `Imagenes` y el del hito 10 es el de
+`caso21`. `master` está sincronizado con `origin/master`.
 
 **Lo siguiente, por este orden.**
 
-1. **Nada pendiente del hito 9.** `Imagenes` está probado y las tres pantallas pintan
-   los banners. La suite son 21 casos y 546 comprobaciones, y las tres comprobaciones
-   de la sección 2 pasan.
-2. **El siguiente hito está acotado y es el caso de aceptación 2.** Faltan las rutas
-   y los botones para **añadir una unidad a mano y moverle la hora**; el servicio ya
-   está escrito (`Calendario::crear()` y `Calendario::mover()`) y no lo llama nadie.
-   Cerrado eso, los nueve casos del apartado 10 tienen su camino completo, y lo que
-   siga será una decisión del promotor, no una tarea técnica.
+1. **Nada pendiente del hito 10.** Las tres revisiones del calendario —añadir, mover
+   y retirar— están conectadas de punta a punta y el caso 21 las prueba. La suite son
+   22 casos y 587 comprobaciones, y las tres comprobaciones de la sección 2 pasan.
+2. **Los nueve casos de aceptación tienen su camino completo.** No queda ninguna tarea
+   técnica derivada del apartado 10. Lo que siga es una decisión del promotor, y lo
+   más probable es que sea de producto: qué pasa con las unidades que sobran cuando el
+   plan y el calendario discrepan, y si la revisión manual debería tener su propio
+   historial de auditoría.
 
 **Antes de escribir código nuevo, tres avisos.**
 
@@ -170,6 +168,14 @@ con `origin/master`.
   protege esa carpeta es su propio `.htaccess`, y su barrera principal es un
   `SetHandler none` que hay que escribir de verdad: estaba descrito en el comentario
   del fichero y no existía.
+- **El tramo y el hora viajan por POST, pero el servicio los recibe por argumento.**
+  En las rutas antiguas —tramos, cantidades, borrar tramo— el identificador va en la
+  URL (`/tramos/{tramo}/borrar`) y por eso se lee con `parametroId()`. En el
+  calendario no: el tramo es una opción de un desplegable, así que va en el cuerpo y
+  se lee con `recibido()`. **Mezclar las dos formas rompe la acción en el
+  navegador**, y no se ve en la consola: `parametroId()` lee los parámetros de la ruta,
+  que ahí no existen, y lanza un 404 antes de mirar el POST. El caso 21 es el que lo
+  cazó.
 - Las secciones «Reglas que no hay que romper» y «Trampas conocidas» de este
   documento son las que más tiempo ahorran. La primera la hace cumplir el
   verificador; la segunda no, y por eso está aquí.
@@ -1122,3 +1128,84 @@ La corrección está en los dos ficheros, y los dos hacen falta:
 **Cómo se comprueba.** El caso 20 son 59 comprobaciones. La suite son 21 casos y 546
 comprobaciones, y la parte de Apache necesita el servidor; sin él, 9 comprobaciones
 menos y un `[OMITIDO]` en la salida.
+
+### Hito 10 — El calendario se revisa a mano
+
+**El fallo que había debajo.** `Calendario::crear()` y `Calendario::mover()` estaban
+escritos, documentados y probados por su propio código desde el hito 3, y **no los
+llamaba nadie**. No había ruta, ni acción de controlador, ni botón. El caso de
+aceptación 2 del apartado 10 pide tres revisiones —añadir una unidad, cambiarle la
+hora, retirar— y la pantalla del calendario solo tenía una, la de retirar. El
+servicio estaba perfecto y era código muerto.
+
+Lo segundo que salió al escribir las pruebas es que **el fallo real estaba en la
+acción que ya existía**: `retirarUnidad()` guardaba el aviso «Unidad retirada»
+después del `catch`, así que un administrador que intentaba retirar una unidad ya
+entregada leía «Unidad retirada» encima del error que decía que no se podía. El
+`return` que faltaba después de redirigir es de este hito.
+
+**Lo que se ha conectado.**
+
+- Dos rutas nuevas en `index.php`, con POST y token como las de retirar:
+  `POST admin/promociones/{id}/calendario/unidad` y
+  `POST admin/promociones/{id}/calendario/{unidad}/mover`.
+- `crearUnidad()` y `moverUnidad()` en `ControladorCampana`, que no llevan reglas:
+  cargan el tramo con `exigirTramoDeLaCampana()`, se lo pasan al servicio y, si el
+  servicio dice que no, repintan la pantalla con el error al lado del campo y lo que
+  se escribió. Los errores no son un aviso que desaparece al recargar.
+- El formulario de añadir, con tramo y hora pero **sin fecha**: la fecha la pone el
+  tramo, porque pedir las dos cosas abre la combinación imposible de un tramo del
+  martes con la fecha del jueves.
+- El formulario de mover por fila, en su propio formulario y no en el de retirar,
+  con un desplegable de tramo, un campo de hora y confirmación.
+- `.mover-unidad` en `estilos.css`, porque tres controles no caben en los 9 rem de
+  `.columna-acciones`.
+
+**El detalle que hay que tener presente.** El tramo se elige en un desplegable, así
+que va **en el POST**, y se lee con `recibido()`. Las acciones antiguas de tramos
+leen el suyo con `parametroId()`, que viene de la URL, porque allí el tramo es parte
+de la ruta (`/tramos/{tramo}/borrar`). Leer un campo de formulario con `parametroId()`
+funciona en el navegador y falla en la consola, o al revés; en este caso lanzaba un
+404 en el navegador, porque en la ruta `/calendario/unidad` no hay `{tramo_id}`. El
+caso 21 lo cazó a la primera, y por eso está aquí.
+
+**Lo que el caso 21 comprueba (41 comprobaciones).**
+
+- Las tres revisiones están conectadas: la pantalla ofrece el formulario de añadir,
+  el botón se llama «Anadir unidad», y hay **exactamente un formulario de mover por
+  cada unidad programada**, ni uno más ni uno menos. Es la comprobación que detecta el
+  error en los dos sentidos, y en el que de verdad importa: un botón de mover en una
+  fila ya entregada es un error que el usuario ve y que el servicio no puede evitar.
+- La fecha la pone el tramo aunque el POST mande otra: se manda `2001-01-01` a
+  propósito y se comprueba que la unidad cae en el día del tramo.
+- El desplegable de premios no ofrece los desactivados, y vuelve a ofrecerlos al
+  reactivarlos —las dos mitades, porque con una sola la comprobación podría pasar
+  siempre.
+- Ni una hora antes del tramo ni una después, ni un tramo o un premio de otra campaña,
+  ni un premio desactivado, ni una unidad de otra campaña: en todos los casos se
+  rechaza y no queda ninguna fila a medio escribir.
+- Mover no entrega ni adjudica: la unidad sigue `programada` después de movida, y un
+  movimiento que el servicio rechaza devuelve la fila **con la hora que se escribió**,
+  no con la que tenía antes.
+- Una unidad anulada ya no se puede mover, y su fila no ofrece ni el desplegable ni el
+  botón de mover ni el de retirar.
+- El fallo del `return`: retirar una unidad en `no_entregada` avisa del error y **no**
+  dice «Unidad retirada» encima.
+
+**Avisos para quien siga.**
+
+- `retirar()` **admite a propósito** una unidad ya `anulada` y la vuelve a anular: es
+  idempotente. La prueba del `return` se hace con `no_entregada`, que sí lanza.
+- La fila del desplegable de premios se comprueba con una expresión regular sobre el
+  `<select>`, no con el nombre del premio en la página entera: el nombre aparece
+  legítimamente en la tabla de unidades de más abajo, y mirarlo ahí hacía pasar la
+  prueba siempre.
+- `crearEscenarioDePanel()` monta tramos que empiezan a las `1N:00:00` y acaban a las
+  `23:00:00`, así que **una hora antes del tramo es `10:30`**, no medianoche. La
+  primera versión del caso usaba esa hora creyendo que era válida.
+- Desde la consola `Controlador::redirigir()` **no lanza `Redirigir`**: guarda un aviso
+  y vuelve, porque `header()` ahí no hace nada útil. Los `try`/`catch` alrededor de
+  `htmlDeAccion()` son código muerto en las pruebas de consola.
+
+**Cómo se comprueba.** El caso 21 son 41 comprobaciones. La suite son 22 casos y 587
+comprobaciones.

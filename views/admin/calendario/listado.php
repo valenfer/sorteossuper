@@ -43,6 +43,8 @@
  * @var array<int, array<string, mixed>> $diagnostico Tramos que no caben.
  * @var array<int, array<string, mixed>> $comparacion Plan frente a calendario.
  * @var array<string, string>           $estados     Estados de una unidad.
+ * @var array<string, string>           $errores     Errores por campo, si los hay.
+ * @var array<string, mixed>            $entrada     Valores enviados, si los hay.
  */
 
 declare(strict_types=1);
@@ -63,6 +65,21 @@ $limite = 500;
 // pantalla no es el calendario entero, o dejara de fiarse de ella.
 $recortado = $total > $limite;
 $mostrar = static fn (string $clave, string $defecto = ''): string => (string) ($filtros[$clave] ?? $defecto);
+
+// Los formularios de anadir y de mover se repintan con lo que se escribio y con
+// el error al lado del campo, no como un aviso que desaparece al recargar.
+$errores = $errores ?? [];
+$entrada = $entrada ?? [];
+$error = static fn (string $campo): string => (string) ($errores[$campo] ?? '');
+$campo = static fn (string $clave, string $defecto = ''): string => (string) ($entrada[$clave] ?? $defecto);
+
+// Un premio desactivado no admite unidades nuevas, asi que no se ofrece en el
+// desplegable. Retirarlo de la lista es mejor que ofrecerlo y dejar que el
+// servicio lo rechace: el error llegaria despues de haber escrito la hora.
+$premiosActivos = array_values(array_filter(
+    $premios,
+    static fn (array $premio): bool => (bool) $premio['activo']
+));
 ?>
 
 <h1><?= Vista::e($titulo) ?></h1>
@@ -151,6 +168,91 @@ $mostrar = static fn (string $clave, string $defecto = ''): string => (string) (
         </div>
     </form>
 </section>
+
+<?php if ($tramos !== [] && $premiosActivos !== []): ?>
+<section class="tarjeta-panel">
+    <h2 class="tarjeta-panel-titulo">Anadir o quitar unidades a mano</h2>
+
+    <p class="ayuda">
+        Para cuando el reparto generado no es el que quieres: se anade una unidad
+        suelta, se le cambia la hora, o se retira. La fecha la pone el tramo que
+        elijas, no se escribe aparte, porque un tramo del martes con la fecha del
+        jueves no es una unidad: es un error.
+    </p>
+
+    <h3>Anadir una unidad</h3>
+
+    <form method="post" action="<?= Vista::e(Aplicacion::url($base . '/calendario/unidad')) ?>"
+          class="formulario">
+        <?= Csrf::campo() ?>
+
+        <div class="campo">
+            <label for="anadir-tramo">Tramo</label>
+            <select id="anadir-tramo" name="tramo_id" required>
+                <?php foreach ($tramos as $opcion): ?>
+                    <option value="<?= (int) $opcion['id'] ?>"
+                        <?= (int) ($entrada['tramo_id'] ?? 0) === (int) $opcion['id'] ? 'selected' : '' ?>>
+                        <?= Vista::e(Tramo::etiqueta($opcion)) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <?php if ($error('tramo_id') !== ''): ?>
+                <span class="campo-error"><?= Vista::e($error('tramo_id')) ?></span>
+            <?php endif; ?>
+        </div>
+
+        <div class="campo">
+            <label for="anadir-premio">Premio</label>
+            <select id="anadir-premio" name="premio_id" required>
+                <?php foreach ($premiosActivos as $opcion): ?>
+                    <option value="<?= (int) $opcion['id'] ?>"
+                        <?= (int) ($entrada['premio_id'] ?? 0) === (int) $opcion['id'] ? 'selected' : '' ?>>
+                        <?= Vista::e((string) $opcion['nombre']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <?php if ($error('premio_id') !== ''): ?>
+                <span class="campo-error"><?= Vista::e($error('premio_id')) ?></span>
+            <?php endif; ?>
+            <?php if ($error('tipo_premio_id') !== ''): ?>
+                <span class="campo-error"><?= Vista::e($error('tipo_premio_id')) ?></span>
+            <?php endif; ?>
+        </div>
+
+        <div class="campo">
+            <label for="anadir-hora">Hora</label>
+            <input type="time" id="anadir-hora" name="hora" required step="60"
+                   value="<?= Vista::e($campo('hora')) ?>">
+            <?php if ($error('inicio') !== ''): ?>
+                <span class="campo-error"><?= Vista::e($error('inicio')) ?></span>
+            <?php endif; ?>
+            <?php if ($error('hora') !== ''): ?>
+                <span class="campo-error"><?= Vista::e($error('hora')) ?></span>
+            <?php endif; ?>
+        </div>
+
+        <div class="campo-boton">
+            <button type="submit" class="boton boton-principal">Anadir unidad</button>
+        </div>
+    </form>
+</section>
+<?php elseif ($tramos === []): ?>
+    <section class="tarjeta-panel">
+        <h2 class="tarjeta-panel-titulo">Anadir unidades a mano</h2>
+        <p class="aviso aviso-aviso">
+            No hay ningun tramo, y una unidad siempre cae dentro de un tramo. Anade
+            primero un tramo.
+        </p>
+    </section>
+<?php else: ?>
+    <section class="tarjeta-panel">
+        <h2 class="tarjeta-panel-titulo">Anadir unidades a mano</h2>
+        <p class="aviso aviso-aviso">
+            No hay ningun premio activo. Un premio desactivado no admite unidades
+            nuevas.
+        </p>
+    </section>
+<?php endif; ?>
 
 <section class="tarjeta-panel">
     <h2 class="tarjeta-panel-titulo">Plan frente a calendario</h2>
@@ -301,6 +403,65 @@ $mostrar = static fn (string $clave, string $defecto = ''): string => (string) (
                                     <?= Csrf::campo() ?>
                                     <button type="submit" class="boton boton-peligro">Retirar</button>
                                 </form>
+
+                                <?php if ($tramos !== []): ?>
+                                    <?php /* Mover va en su propio formulario y no en un
+                                       desplegable dentro del de retirar: son dos acciones
+                                       distintas con dos consecuencias distintas, y un
+                                       administrador que quiere mover una hora no deberia
+                                       tener que decidir si la quiere retirar. */ ?>
+                                    <?php
+                                    // Cuando el servicio rechaza el movimiento, esta fila
+                                    // se repinta con lo que se escribio, no con la hora
+                                    // que tenia antes. Perder el valor escrito obliga a
+                                    // repetir el trabajo y a volver a fallar.
+                                    $esEsta = (int) ($entrada['unidad_id'] ?? 0) === (int) $unidad['id'];
+                                    $tramoElegido = (int) ($esEsta ? ($entrada['tramo_id'] ?? 0) : $unidad['tramo_id']);
+                                    $horaElegida = $esEsta
+                                        ? (string) ($entrada['hora'] ?? '')
+                                        : substr((string) $unidad['inicio'], 11, 5);
+                                    ?>
+                                    <form method="post"
+                                          action="<?= Vista::e(Aplicacion::url($base . '/calendario/' . (int) $unidad['id'] . '/mover')) ?>"
+                                          class="mover-unidad">
+                                        <?= Csrf::campo() ?>
+
+                                        <label class="visualmente-oculto"
+                                               for="mover-<?= (int) $unidad['id'] ?>">
+                                            Tramo al que se mueve la unidad de las
+                                            <?= Vista::e(substr((string) $unidad['inicio'], 11, 8)) ?>
+                                        </label>
+
+                                        <select id="mover-<?= (int) $unidad['id'] ?>"
+                                                name="tramo_id">
+                                            <?php foreach ($tramos as $opcion): ?>
+                                                <option value="<?= (int) $opcion['id'] ?>"
+                                                    <?= $tramoElegido === (int) $opcion['id'] ? 'selected' : '' ?>>
+                                                    <?= Vista::e(Tramo::etiqueta($opcion)) ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+
+                                        <label class="visualmente-oculto"
+                                               for="mover-hora-<?= (int) $unidad['id'] ?>">
+                                            Hora a la que se mueve
+                                        </label>
+                                        <input type="time" id="mover-hora-<?= (int) $unidad['id'] ?>"
+                                               name="hora" step="60" required
+                                               value="<?= Vista::e($horaElegida) ?>">
+
+                                        <button type="submit" class="boton boton-sutil"
+                                                onclick="return confirm('Mover esta unidad a la hora de al lado?')">
+                                            Mover
+                                        </button>
+
+                                        <?php if ($esEsta && ($error('tramo_id') !== '' || $error('inicio') !== '')): ?>
+                                            <span class="campo-error">
+                                                <?= Vista::e($error('tramo_id') !== '' ? $error('tramo_id') : $error('inicio')) ?>
+                                            </span>
+                                        <?php endif; ?>
+                                    </form>
+                                <?php endif; ?>
                             <?php else: ?>
                                 <span class="ayuda">
                                     <?= (string) ($unidad['anulada_motivo'] ?? '') ?>

@@ -38,6 +38,7 @@ namespace App\Controllers;
 
 use App\Core\Controlador;
 use App\Core\ErrorValidacion;
+use App\Core\NoEncontrado;
 use App\Core\Validador;
 use App\Core\Vista;
 use App\Models\AsignacionTramo;
@@ -545,7 +546,7 @@ class ControladorCampana extends Controlador
     // =========================================================================
 
     /**
-     * Muestra el calendario, el plan y la diferencia entre los dos.
+* Muestra el calendario, el plan y la diferencia entre los dos.
      *
      * @return void
      */
@@ -555,20 +556,100 @@ class ControladorCampana extends Controlador
         $campana = $this->exigirCampana($id);
         $filtros = $this->filtros();
 
-        $diagnostico = $this->calendario->diagnosticar($id);
+        $this->pintarCalendario($id, $campana, $filtros, [], []);
+    }
 
-        $this->vista('admin/calendario/listado', [
-            'titulo'      => 'Calendario de ' . $campana['nombre'],
-            'campana'     => $campana,
-            'unidades'    => $this->calendario->listar($id, $filtros, 500),
-            'total'       => $this->calendario->contar($id, $filtros),
-            'filtros'     => $filtros,
-            'tramos'      => (new Tramo())->listarPorPromocion($id),
-            'premios'     => (new TipoPremio())->listarPorPromocion($id),
-            'diagnostico' => $diagnostico,
-            'comparacion' => $this->config->compararPlanYCalendario($id),
-            'estados'     => UnidadPremio::estados(),
-        ]);
+    /**
+     * Anade una unidad suelta al calendario.
+     *
+     * Es la primera de las tres revisiones que pide el apartado 4.6. El tramo se
+     * elige de una lista y la fecha la pone el propio tramo, no se escribe aparte:
+     * pedir una fecha y un tramo por separado deja abierta la combinacion imposible
+     * de un tramo del martes con la fecha del jueves, que el servicio rechazaria
+     * con un mensaje que la administradora no podria ver en el formulario.
+     *
+     * @return void
+     */
+    public function crearUnidad(): void
+    {
+        $this->exigirCsrf();
+
+        $id = $this->parametroId('id', 'admin/promociones');
+        $campana = $this->exigirCampana($id);
+        $tramoId = (int) $this->recibido('tramo_id', '0');
+        $premioId = (int) $this->recibido('premio_id', '0');
+        $hora = trim((string) $this->recibido('hora', ''));
+
+        // El tramo se exige aqui y no solo en el servicio porque un tramo que no
+        // es de esta campana no es un dato que corregir: es una peticion que no
+        // tiene sentido, y merece un 404 y no un error de validacion. El premio,
+        // en cambio, si puede ser un dato equivocado —un desplegable que se ha
+        // quedado desfasado— y por eso se responde con ErrorValidacion, que
+        // devuelve a la pantalla con el formulario lleno.
+        $tramo = $this->exigirTramoDeLaCampana($tramoId, $id);
+
+        try {
+            $this->calendario->crear(
+                $id,
+                $tramoId,
+                $premioId,
+                (string) $tramo['fecha'],
+                $hora
+            );
+        } catch (ErrorValidacion $e) {
+            $this->pintarCalendario(
+                $id,
+                $campana,
+                $this->filtros(),
+                $e->errores(),
+                ['tramo_id' => $tramoId, 'premio_id' => $premioId, 'hora' => $hora]
+            );
+            return;
+        }
+
+        Vista::guardarAviso('Unidad anadida al calendario.', 'exito');
+        $this->redirigir('admin/promociones/' . $id . '/calendario');
+    }
+
+    /**
+     * Mueve una unidad programada a otro tramo u otra hora.
+     *
+     * Mover no es retirar ni borrar: cambia la hora de una fila que aun no ha
+     * pasado nada, y por eso va en su propia ruta y con su propio boton.
+     *
+     * @return void
+     */
+    public function moverUnidad(): void
+    {
+        $this->exigirCsrf();
+
+        $id = $this->parametroId('id', 'admin/promociones');
+        $campana = $this->exigirCampana($id);
+        $unidadId = $this->parametroId('unidad', 'admin/promociones/' . $id . '/calendario');
+        $tramoId = (int) $this->recibido('tramo_id', '0');
+        $hora = trim((string) $this->recibido('hora', ''));
+
+        // El tramo de destino se exige aqui y no en el servicio por una razon
+        // concreta: si no existe, la pantalla se tiene que repintar con un error
+        // intelligible, y el servicio solo sabe lanzar ErrorValidacion de reglas
+        // de negocio, no de enlaces rotos.
+        $tramo = $this->exigirTramoDeLaCampana($tramoId, $id);
+
+        try {
+            $this->calendario->mover($unidadId, $tramoId, (string) $tramo['fecha'], $hora, $id);
+        } catch (ErrorValidacion $e) {
+            $this->pintarCalendario(
+                $id,
+                $campana,
+                $this->filtros(),
+                $e->errores(),
+                ['unidad_id' => $unidadId, 'tramo_id' => $tramoId, 'hora' => $hora]
+            );
+            return;
+        }
+
+        Vista::guardarAviso('Unidad movida.', 'exito');
+        $this->redirigir('admin/promociones/' . $id . '/calendario');
     }
 
     /**
@@ -620,7 +701,7 @@ class ControladorCampana extends Controlador
         $id = $this->parametroId('id', 'admin/promociones');
         $this->exigirCampana($id);
         $unidadId = $this->parametroId('unidad', 'admin/promociones/' . $id . '/calendario');
-        $motivo = (string) $this->recibido('motivo', '');
+$motivo = (string) $this->recibido('motivo', '');
 
         try {
             $this->calendario->retirar($unidadId, $id, $motivo);
@@ -628,6 +709,12 @@ class ControladorCampana extends Controlador
             foreach ($e->errores() as $mensaje) {
                 Vista::guardarAviso((string) $mensaje, 'error');
             }
+
+            // Sin este return se guardaba tambien el «Unidad retirada» de abajo
+            // encima de los errores, y el administrador leia que habia funcionado
+            // justo despues de un aviso que dice lo contrario.
+            $this->redirigir('admin/promociones/' . $id . '/calendario');
+            return;
         }
 
         Vista::guardarAviso('Unidad retirada.', 'exito');
@@ -652,6 +739,68 @@ class ControladorCampana extends Controlador
     private function exigirCampana(int $id): array
     {
         return (new Promocion())->exigirPorId($id, 'admin/promociones/' . $id);
+    }
+
+/**
+     * Carga un tramo o responde con un 404 si no es de esta campana.
+     *
+     * El caso de uso es anadir y mover unidades: las dos necesitan la fecha del
+     * tramo de destino y no la piden por escrito, precisamente para que no se
+     * pueda escribir un tramo del martes con la fecha del jueves.
+     *
+     * @param int $tramoId Tramo que se quiere.
+     * @param int $id      Campana a la que tiene que pertenecer.
+     *
+     * @return array<string, mixed> Fila del tramo.
+     */
+    private function exigirTramoDeLaCampana(int $tramoId, int $id): array
+    {
+        $tramo = (new Tramo())->buscarPorId($tramoId);
+
+        if ($tramo === null || (int) $tramo['promocion_id'] !== $id) {
+            throw new NoEncontrado('Ese tramo no existe en esta campana.');
+        }
+
+        return $tramo;
+    }
+
+    /**
+     * Vuelve a pintar la pantalla del calendario con los errores.
+     *
+     * El error se pinta junto al formulario en vez de en un aviso de una vez,
+     * porque «la hora tiene que estar entre las 10:00 y las 14:00» no dice nada
+     * util si desaparece al cambiar de pantalla, y el tramo elegido hay que
+     * recordarselo a quien esta corrigiendo.
+     *
+     * @param int                   $id      Campana.
+     * @param array<string, mixed>  $campana Fila de la campana.
+     * @param array<string, mixed>  $filtros Filtros que venian aplicados.
+     * @param array<string, string> $errores Errores por campo.
+     * @param array<string, mixed>  $entrada Valores enviados, para no perderlos.
+     *
+     * @return void
+     */
+    private function pintarCalendario(
+        int $id,
+        array $campana,
+        array $filtros,
+        array $errores,
+        array $entrada
+    ): void {
+        $this->vista('admin/calendario/listado', [
+            'titulo'      => 'Calendario de ' . $campana['nombre'],
+            'campana'     => $campana,
+            'unidades'    => $this->calendario->listar($id, $filtros, 500),
+            'total'       => $this->calendario->contar($id, $filtros),
+            'filtros'     => $filtros,
+            'tramos'      => (new Tramo())->listarPorPromocion($id),
+            'premios'     => (new TipoPremio())->listarPorPromocion($id, true),
+            'diagnostico' => $this->calendario->diagnosticar($id),
+            'comparacion' => $this->config->compararPlanYCalendario($id),
+            'estados'     => UnidadPremio::estados(),
+            'errores'     => $errores,
+            'entrada'     => $entrada,
+        ]);
     }
 
     /**

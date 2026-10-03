@@ -603,6 +603,24 @@ table.tabla tbody tr:last-child td {
     white-space: nowrap;
 }
 
+/* El formulario de mover va debajo del de retirar, en su propia linea, porque
+   lleva un desplegable de tramos y un campo de hora y no caben en 9 rem. El ancho
+   de .columna-acciones es una sugerencia para el navegador, no un limite: si el
+   contenido no cabe, la tabla se ensancha sola. */
+.mover-unidad {
+    display: flex;
+    gap: .25rem;
+    margin-top: .4rem;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.mover-unidad select,
+.mover-unidad input[type="time"] {
+    padding: .2rem;
+    font-size: .8rem;
+}
+
 /* Estados. El mismo texto va siempre acompanado del mismo color, para que no
    dependa solo del matiz. */
 .estado {

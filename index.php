@@ -303,9 +303,14 @@ $router->post('admin/promociones/{id}/tramos', 'ControladorCampana', 'crearTramo
 $router->post('admin/promociones/{id}/tramos/{tramo}/borrar', 'ControladorCampana', 'borrarTramo', $admin);
 $router->post('admin/promociones/{id}/tramos/{tramo}/cantidades', 'ControladorCampana', 'guardarCantidades', $admin);
 
-// Calendario.
+// Calendario. Anadir y mover van en POST con CSRF porque escriben en
+// unidades_premio: un enlace se pulsa con un clic de mas y el resultado seria una
+// unidad de premio en una hora que nadie ha elegido. Retirar tambien, y ademas
+// porque consume una unidad del plan.
 $router->get('admin/promociones/{id}/calendario', 'ControladorCampana', 'calendario', $admin);
 $router->post('admin/promociones/{id}/calendario/generar', 'ControladorCampana', 'generarCalendario', $admin);
+$router->post('admin/promociones/{id}/calendario/unidad', 'ControladorCampana', 'crearUnidad', $admin);
+$router->post('admin/promociones/{id}/calendario/{unidad}/mover', 'ControladorCampana', 'moverUnidad', $admin);
 $router->post('admin/promociones/{id}/calendario/{unidad}/retirar', 'ControladorCampana', 'retirarUnidad', $admin);
 
 // Panel de seguimiento y cierre. El cierre va en POST con CSRF porque consume las

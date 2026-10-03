@@ -77,6 +77,28 @@ $codigo = !$premio || $hayCorreo ? '' : (string) ($resultado['codigo_reclamacion
 $texto = (string) ($visual[$premio ? 'resultado_premio_texto' : 'resultado_no_premio_texto'] ?? '');
 $imagen = (string) ($visual[$premio ? 'resultado_premio_ruta' : 'resultado_no_premio_ruta'] ?? '');
 
+// Los banners se pintan en las dos ramas del resultado porque los dos casos
+// salen en la misma pantalla y sin ellos la campana se veria a medias: la
+// administratora sube el cartel, lo ve en la vista previa del panel y luego no
+// aparece ni al ganar ni al no ganar. Van fuera del «section.panel» por lo
+// mismo que en el formulario, para que el h1 siga siendo lo primero que se lee.
+$bannerSup = trim((string) ($visual['banner_sup_ruta'] ?? ''));
+$bannerSupAlt = trim((string) ($visual['banner_sup_alt'] ?? ''));
+$bannerPie = trim((string) ($visual['banner_pie_ruta'] ?? ''));
+$bannerPieAlt = trim((string) ($visual['banner_pie_alt'] ?? ''));
+$comercio = trim((string) ($campana['comercio_nombre'] ?? ''));
+
+// El titulo no se usa como texto alternativo porque en esta vista no siempre
+// viene: la capa de correo y las pruebas la pintan sin el, y una referencia a
+// una variable que no existe a mitad del renderizado rompe la pantalla entera.
+if ($bannerSupAlt === '') {
+    $bannerSupAlt = $comercio !== '' ? $comercio : 'Promocion';
+}
+
+if ($bannerPieAlt === '') {
+    $bannerPieAlt = $bannerSupAlt;
+}
+
 if ($texto === '') {
     $texto = $premio
         ? 'Su participacion ha sido registrada.'
@@ -90,6 +112,13 @@ if ($texto === '') {
 // pantalla empezara a sugerir que el giro decide el premio. Lo que hay en el
 // centro es el nombre del comercio, que es el logotipo, y no un premio.
 ?>
+
+<?php if ($bannerSup !== ''): ?>
+    <img
+        class="banner banner-superior"
+        src="<?= Vista::e(Aplicacion::asset('uploads/' . ltrim($bannerSup, '/'))) ?>"
+        alt="<?= Vista::e($bannerSupAlt) ?>">
+<?php endif; ?>
 
 <section class="panel resultado resultado-<?= $rechazada ? 'rechazada' : ($premio ? 'premio' : 'sin-premio') ?>">
 
@@ -222,3 +251,10 @@ if ($texto === '') {
 
 </div>
 </section>
+
+<?php if ($bannerPie !== ''): ?>
+    <img
+        class="banner banner-pie"
+        src="<?= Vista::e(Aplicacion::asset('uploads/' . ltrim($bannerPie, '/'))) ?>"
+        alt="<?= Vista::e($bannerPieAlt) ?>">
+<?php endif; ?>

@@ -53,8 +53,8 @@ Lo que se espera ahora mismo, exactamente:
 
 | Comprobación | Resultado esperado |
 | --- | --- |
-| `verificar_docs.php` | `Todo correcto: 68 ficheros, sin problemas` |
-| `tests\run.php` | `Todo correcto: 14 casos ejecutados, 294 comprobaciones` |
+| `verificar_docs.php` | `Todo correcto: 75 ficheros, sin problemas` |
+| `tests\run.php` | `Todo correcto: 21 casos ejecutados, 546 comprobaciones` |
 | `instalar.php --diagnostico` | `Diagnostico terminado`, sin ninguna escritura |
 | `instalar.php` | Idempotente: se puede repetir sin romper nada |
 | `enviar_correos.php` | Enviados 0, fallidos 0 con la cola vacía, sin error |
@@ -116,18 +116,18 @@ que romper».
 Este es el resumen para retomar el trabajo. Si solo se lee una cosa de todo el
 documento, que sea esto.
 
-**Punto exacto en el que está.** Los hitos 0 a 8 están cerrados y subidos a
+**Punto exacto en el que está.** Los hitos 0 a 9 están cerrados y subidos a
 `origin/master`, y las decisiones D4, D6 y D19 están confirmadas. No hay nada a
 medias: el árbol de trabajo está limpio y las tres comprobaciones pasan. El commit de
-D19 es `c6e91c4`, el de D4 es `dbf2fdf`, el del hito 7 es `51fec02` y el del hito 8,
-que es D6, es `cb9b714`. `master` está sincronizado con `origin/master`.
+D19 es `c6e91c4`, el de D4 es `dbf2fdf`, el del hito 7 es `51fec02`, el del hito 8,
+que es D6, es `cb9b714` y el del hito 9 es el de `Imagenes`. `master` está sincronizado
+con `origin/master`.
 
 **Lo siguiente, por este orden.**
 
-1. **Nada pendiente de D6.** La prueba de concurrencia por HTTP está escrita, es el
-   caso 19 de la suite, y tiene su apartado entero en el registro de hitos, más abajo.
-   La suite son 20 casos y 487 comprobaciones, y las tres comprobaciones de la
-   sección 2 pasan.
+1. **Nada pendiente del hito 9.** `Imagenes` está probado y las tres pantallas pintan
+   los banners. La suite son 21 casos y 546 comprobaciones, y las tres comprobaciones
+   de la sección 2 pasan.
 2. **El siguiente hito está por decidir, y esa es la decisión que hay que tomar
    primero.** No hay nada de código pendiente: lo único abierto es qué se hace ahora,
    y la respuesta no está escrita en ningún sitio porque es una decisión del
@@ -149,6 +149,11 @@ que es D6, es `cb9b714`. `master` está sincronizado con `origin/master`.
   `.htaccess` modificado con 121 líneas que nadie había escrito. Si alguna vez hay
   que tocar ese bloque, hay que conservar los finales de línea que ya tiene el
   fichero, y comprobar con `git status` que no se queda nada puesto.
+- **`uploads/` no puede volver a la lista de directorios prohibidos de la raíz.** El
+  hito 9 la sacó de ahí porque las imágenes se guardaban y no se veían nunca. Lo que
+  protege esa carpeta es su propio `.htaccess`, y su barrera principal es un
+  `SetHandler none` que hay que escribir de verdad: estaba descrito en el comentario
+  del fichero y no existía.
 - Las secciones «Reglas que no hay que romper» y «Trampas conocidas» de este
   documento son las que más tiempo ahorran. La primera la hace cumplir el
   verificador; la segunda no, y por eso está aquí.
@@ -1025,3 +1030,79 @@ la concurrencia, así que se comprobó las dos veces:
 **Cómo se comprueba.** El caso 19 son 18 comprobaciones. La suite son 20 casos y 487
 comprobaciones, y el caso necesita Apache arrancado; sin él, 18 comprobaciones menos
 y un `[OMITIDO]` en la salida.
+
+### Hito 9 — Imágenes: validar, servir y no ejecutar
+
+**El fallo que había debajo.** `Imagenes` llevaba el árbol sin una sola prueba, pero
+escribir el caso 20 destapó un fallo real: **el `.htaccess` de la raíz tenía `uploads`
+dentro de la lista de directorios prohibidos**, así que cualquier imagen que subiera
+el panel se guardaba, se pintaba en un `<img>` y Apache respondía 403. El panel
+aceptaba ficheros, el disco los guardaba y ninguna clienta los veía nunca. Nadie se
+daba cuenta sin abrir la página con el servidor delante, que es exactamente lo que
+hacen las pruebas por sockets.
+
+La corrección está en los dos ficheros, y los dos hacen falta:
+
+- `.htaccess` de la raíz: `uploads` sale de `(app|config|sql|tests|bin)/` y gana una
+  regla propia, `RewriteRule ^uploads/ - [L]`, que corta antes del front controller.
+- `uploads/.htaccess`: **el `SetHandler none` que el comentario prometía no existía**.
+  Estaba descrito en el fichero, no escrito. Sin él, un `.php` subido a esa carpeta
+  lo ejecutaba mod_php, y el `FilesMatch` de más abajo nunca llegaba a aplicarse.
+  También se han añadido `Options -ExecCGI -Indexes -Includes`, que cortan CGI e
+  `mod_include` sin depender de que el módulo que toque esté cargado.
+
+**Lo que hace el caso 20, en orden.**
+
+- **Rutas que no pueden existir.** Traversal, ruta absoluta de Windows y de Unix,
+  contrabarra, byte nulo, `.svg`, `.php`, extensión en mayúsculas, y rutas que no
+  llevan el prefijo que pone el servicio. La lista va primero por lo mismo que en el
+  caso 18: si alguna pasa por un motivo equivocado, las demás no valen.
+- **Ficheros que no son imágenes.** Vacío, un script disfrazado de PNG, y un PNG de
+  verdad. La extensión se decide por el contenido con `finfo` y `getimagesize()`, y
+  hay un PNG con nombre `.jpg` que se comprueba que se guarda como `.png`.
+- **El ciclo completo.** `guardar()` mueve el origen —el temporal desaparece, no se
+  copia—, la ruta devuelta lleva el prefijo de la configuración y es distinta cada
+  vez, `sustituir()` borra la anterior y `borrarCampana()` no sale de `uploads`.
+- **Apache, y solo con servidor.** La imagen guardada contesta 200 con un MIME de
+  imagen, y un `.php` real plantado en esa carpeta con una marca dentro no se ejecuta
+  y contesta 403. Se pide con POST a propósito: si Apache lo ejecutara, el método no
+  cambiaría nada, pero mandarlo como POST deja claro que no se está comprobando solo
+  que un GET no lo ejecuta. Sin servidor, esta parte se omite con `[OMITIDO]` y todo lo
+  demás sigue igual.
+- **Las tres pantallas.** La de resultado con premio y sin premio, y el formulario.
+  Aquí salió el segundo fallo real, y era de la vista y no del servicio: **`banner_sup_ruta`
+  y `banner_pie_ruta` se guardaban, se editaban en el panel y no se pintaban en ninguna
+  parte.** Se podían subir los dos carteles, verlos en la vista previa de la
+  apariencia y no aparecer nunca en la campaña. El caso 8 pide que lo configurado se
+  vea en las tres pantallas, así que las dos vistas de participación los pintan ya,
+  con su texto alternativo y con CSS en `estilos.css`.
+
+**Las dos mutaciones que se hicieron para comprobar que la prueba muerde.**
+
+- **Volviendo a meter `uploads` en la lista de la raíz**, el caso falla con 2
+  comprobaciones: la imagen da 403 en lugar de 200 y no llega con MIME de imagen. Las
+  otras 57 siguen pasando, porque la validación del servicio no depende de Apache.
+- **Quitando el `SetHandler none`**, el caso falla también. Es la comprobación que
+  importa más: es la que distingue «no se ejecuta» de «da error por casualidad».
+
+**Avisos para quien siga.**
+
+- `peticionWeb()` **exige barra inicial** en la ruta (`/uploads/...`), porque él
+  concatena el prefijo del proyecto delante. Sin ella sale un 404 que parece un
+  problema de Apache y no lo es: el fichero está ahí y se sirve con `file_get_contents`.
+  Esta es la razón por la que `escribirPeticionWeb()` acepta ahora un método aparte:
+  un POST sin cuerpo hay que poder pedirlo, y antes se deducía solo de si había campos.
+- `Vista::renderizar()` **no siempre recibe `titulo`**, así que ninguna vista de
+  participación puede usar `$titulo` sin el `??` de cortesía. Referenciarla a pelo
+  rompe la pantalla entera a mitad del renderizado, y solo en el camino que llama a
+  `renderizar()` en vez de `mostrar()`.
+- La pantalla de resultado se pinta **sin insertar una participación**: se le pasa la
+  forma de `$resultado` que devuelve el motor y ya está. Un `INSERT` directo en
+  `participaciones` por pintar una pantalla llenaba la base de datos de filas falsas
+  y, además, usaba columnas que el esquema no tiene.
+- Las dos imágenes del `.htaccess` están en **CRLF**, y las dos se reescribieron a mano
+  durante este hito. Si se tocan, conservar los finales de línea y comprobar `git status`.
+
+**Cómo se comprueba.** El caso 20 son 59 comprobaciones. La suite son 21 casos y 546
+comprobaciones, y la parte de Apache necesita el servidor; sin él, 9 comprobaciones
+menos y un `[OMITIDO]` en la salida.

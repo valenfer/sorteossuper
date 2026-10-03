@@ -5054,6 +5054,571 @@ function resultadoDePantalla(string $html): string
 }
 
 /**
+ * Caso 20: las imagenes de la campana, que no se probaban en ningun sitio.
+ *
+ * app/Services/Imagenes.php es la parte del proyecto que decide que ficheros
+ * se guardan en el disco y que rutas se sirven como imagen. Son dos decisiones
+ * de seguridad, no de estilo, y ninguna estaba cubierta. Este caso las cubre,
+ * y ademas comprueba contra Apache lo que no se puede comprobar desde consola:
+ * que una imagen subida se vea de verdad y que un .php en la misma carpeta no
+ * se ejecute.
+ *
+ * Las dos mitades van separadas a proposito:
+ *
+ *   1. El servicio, que se puede probar entero sin servidor.
+ *   2. Apache, que necesita el servidor y se salta sin el, como el caso 19.
+ *
+ * @return void
+ */
+function caso20(): void
+{
+    echo 'Caso 20: las imagenes se validan y se sirven sin ejecutarse', PHP_EOL;
+
+    $servidor = localizarServidorWeb();
+    $escenario = null;
+
+    if ($servidor === null) {
+        echo '  [OMITIDO] No hay servidor web: la parte de Apache se omite. '
+            . 'La validacion de ficheros y rutas se comprueba igual.', PHP_EOL;
+    }
+
+    // La red de seguridad esta antes que nada, igual que en el caso 19, porque
+    // un fallo a mitad no debe dejar una campana con imagenes dentro.
+    //
+    // El .php plantado en uploads/ tambien se quita aqui y no solo en el finally:
+    // si el caso muere antes de llegar a plantarlo no hay nada que borrar, y si
+    // muere despues, el shutdown lo recoge igual que el finally.
+    $campanaId = 0;
+
+    registrarLimpiezaCaso20(static function () use (&$campanaId): void {
+        @unlink(\App\Core\Aplicacion::raiz() . 'uploads/caso20-plantado.php');
+
+        if ($campanaId > 0) {
+            (new \App\Services\Imagenes())->borrarCampana($campanaId);
+        }
+    });
+
+    try {
+        // =====================================================================
+        // PARTE 1. EL SERVICIO, SIN NECESIDAD DE SERVIDOR
+        // =====================================================================
+
+        $imagenes = new \App\Services\Imagenes();
+
+        // ---- 1.1. Las rutas que no pueden existir de ninguna manera --------
+        //
+        // Esta lista va primero por lo mismo que en el caso 18: si una sola de
+        // estas comprobaciones pasara por un motivo equivocado, las demas no
+        // dirian nada. Cada entrada lleva el motivo por el que se rechaza, que
+        // es la parte que no se deduce leyendo el patron.
+        $rutasMalas = [
+            '../../../config/config.php'      => 'sale de la carpeta con ..',
+            '1/../../config.php'             => 'sale de la carpeta con .. en medio',
+            '/var/www/config.php'            => 'es una ruta absoluta con barra',
+            'C:/xampp/htdocs/sorteos/config.php' => 'es una ruta absoluta de Windows',
+            '1\\img.jpg'                     => 'usa contrabarras en vez de barras',
+            "1/img.jpg\0.php"               => 'lleva un byte nulo',
+            ''                               => 'esta vacia',
+            '1/img.php'                      => 'tiene una extension que no es imagen',
+            '1/img.svg'                      => 'tiene .svg, que es un XML con script dentro',
+            '1/../../1/img.png'             => 'sube y luego baja de la carpeta',
+            'imagen.jpg'                     => 'no dice de que campana es',
+            '1/sub/carpeta/img.png'          => 'tiene carpetas de mas',
+            'espacio /img.png'               => 'tiene un espacio en el nombre de la campana',
+        ];
+
+        foreach ($rutasMalas as $ruta => $motivo) {
+            comprobar(
+                !\App\Services\Imagenes::esRutaValida($ruta),
+                'La ruta «' . $ruta . '» se rechaza porque ' . $motivo
+            );
+        }
+
+        // Las tres primeras deserving de un nombre propio, porque son las que
+        // alguien escribiria sin pensar que son un ataque.
+        comprobar(
+            !\App\Services\Imagenes::esRutaValida('../../config/config.php'),
+            'Una ruta con .. no puede leer config/config.php, que es el fichero mas peligroso del proyecto'
+        );
+
+        comprobar(
+            (new \App\Services\Imagenes())->rutaAbsoluta('../../config/config.php') === '',
+            'Y rutaAbsoluta() devuelve cadena vacia en vez de una ruta por la que leerlo'
+        );
+
+        comprobar(
+            (new \App\Services\Imagenes())->existe('../../config/config.php') === false,
+            'Y existe() dice que no, aunque el fichero exista de verdad'
+        );
+
+        comprobar(
+            (new \App\Services\Imagenes())->borrar('../../config/config.php') === false,
+            'Y borrar() se niega a borrar config/config.php'
+        );
+
+        // ---- 1.2. Las rutas que si valen ------------------------------------
+        //
+        // Las de arriba dicen que se rechaza lo malo, pero no que se acepte lo
+        // bueno: un patron que rechazase todo pasa esas comprobaciones igual.
+        // Estas dos lo tapan, con la extension que devuelve guardar() mas
+        // arriba y con las de la configuracion.
+        $config = \App\Core\Aplicacion::config();
+        $unaExtension = (string) $config['archivos']['extensiones'][0];
+        $prefijo = (string) $config['archivos']['prefijo'];
+
+        foreach ($config['archivos']['extensiones'] as $extension) {
+            comprobar(
+                \App\Services\Imagenes::esRutaValida('7/' . $prefijo . 'a1b2c3.' . $extension),
+                'Una ruta con la extension admitida «' . $extension . '» es valida'
+            );
+        }
+
+        comprobar(
+            \App\Services\Imagenes::esRutaValida('7/' . $prefijo . 'a1b2c3.' . $unaExtension),
+            'Una ruta con el nombre que genera el servicio es valida'
+        );
+
+        // ---- 1.3. Un fichero vacio no se guarda ------------------------------
+        $vacio = sys_get_temp_dir() . '/caso20-vacio.png';
+        file_put_contents($vacio, '');
+
+        $errorVacio = '';
+        try {
+            (new \App\Services\Imagenes())->guardar($vacio, 999999);
+        } catch (\App\Core\ErrorValidacion $e) {
+            $errorVacio = $e->errores()['imagen'] ?? $e->getMessage();
+        }
+
+        unlink($vacio);
+
+        comprobarContiene($errorVacio, 'vacia', 'Un fichero de cero bytes se rechaza y lo dice');
+        comprobar(
+            !is_dir(\App\Core\Aplicacion::raiz() . 'uploads/999999'),
+            'Y no se crea la carpeta de la campana cuando la subida falla'
+        );
+
+        // ---- 1.4. Un script renombrado a .png se rechaza ---------------------
+        //
+        // Este es el caso que hace que la validacion exista. La extension es
+        // la de una imagen y la lista blanca la acepta, asi que lo unica que
+        // puede pararlo es leer la cabecera de verdad. El script lleva su
+        // propio <script> para que se vea que no es un PNG disguise.
+        $falso = sys_get_temp_dir() . '/caso20-falso.png';
+        file_put_contents($falso, '<?php echo "ejecutado"; ?><script>alert(1)</script>');
+
+        $errorFalso = '';
+        try {
+            (new \App\Services\Imagenes())->guardar($falso, 999999);
+        } catch (\App\Core\ErrorValidacion $e) {
+            $errorFalso = $e->errores()['imagen'] ?? $e->getMessage();
+        }
+
+        unlink($falso);
+
+        comprobar(
+            $errorFalso !== '',
+            'Un script PHP renombrado a .png se rechaza, aunque su extension sea la de una imagen'
+        );
+
+        comprobarContiene(
+            $errorFalso,
+            'imagen',
+            'Y el motivo habla de imagen, que es lo que el administrador puede arreglar'
+        );
+
+        comprobar(
+            !is_file(\App\Core\Aplicacion::raiz() . 'uploads/999999'),
+            'Y no queda nada guardado en la carpeta de la campana'
+        );
+
+        // ---- 1.5. Una imagen de verdad se guarda y se devuelve la ruta ------
+        //
+        // Aqui ya se necesita una campana, porque el servicio guarda en la
+        // carpeta que lleva el identificador. Se usa la que hay, y se borra al
+        // terminar, en la red de seguridad de arriba.
+        $escenario = crearEscenarioDeAdjudicacion(['00:00:00']);
+        $campanaId = (int) $escenario['promocion'];
+
+        $png = escribirImagenDePrueba(sys_get_temp_dir() . '/caso20-real.png');
+        $ruta = (new \App\Services\Imagenes())->guardar($png, $campanaId);
+        @unlink($png);
+
+        comprobar(
+            \App\Services\Imagenes::esRutaValida($ruta),
+            'La ruta que devuelve guardar() es una ruta valida, sin tocar la base de datos para saberlo'
+        );
+
+        comprobarIgual(
+            $campanaId,
+            (int) explode('/', $ruta)[0],
+            'La ruta guardada lleva la carpeta de su campana, que es su identificador'
+        );
+
+        comprobar(
+            (new \App\Services\Imagenes())->existe($ruta),
+            'Y el fichero esta en el disco donde la ruta dice'
+        );
+
+        // El nombre lo genera el servidor y no el navegador, y esto es lo que
+        // impide que dos imagenes con el mismo nombre original se pisen.
+        comprobar(
+            str_starts_with(basename($ruta), $prefijo),
+            'El nombre del fichero lo pone el servicio, con el prefijo de la configuracion'
+        );
+
+        comprobarNoContiene(
+            basename($ruta),
+            'caso20',
+            'Y no aparece en el nombre nada de lo que el administrador escribio'
+        );
+
+        comprobar(
+            filesize((new \App\Services\Imagenes())->rutaAbsoluta($ruta)) > 0,
+            'El fichero guardado no esta vacio'
+        );
+
+        // ---- 1.6. Dos imagenes del mismo nombre no se pisan ------------------
+        $otraRuta = (new \App\Services\Imagenes())->guardar(
+            escribirImagenDePrueba(sys_get_temp_dir() . '/caso20-real2.png'),
+            $campanaId
+        );
+        @unlink(sys_get_temp_dir() . '/caso20-real2.png');
+
+        comprobar(
+            $otraRuta !== $ruta,
+            'Dos imagenes guardadas en la misma campana reciben nombres distintos'
+        );
+
+        comprobar(
+            (new \App\Services\Imagenes())->existe($ruta) && (new \App\Services\Imagenes())->existe($otraRuta),
+            'Y las dos siguen en el disco, sin pisarse'
+        );
+
+        // ---- 1.7. Sustituir deja la anterior fuera, pero no antes de tiempo --
+        //
+        // El orden importa: si se borrara la anterior antes de guardar la
+        // nueva, un fallo dejaria la campana sin imagen. Se comprueba que al
+        // sustituir sin subir nada, la anterior sigue donde estaba.
+        comprobarIgual(
+            $ruta,
+            $imagenes->sustituir($ruta, '', 'imagen', $campanaId),
+            'Si no se sube nada, sustituir() devuelve la ruta anterior sin tocarla'
+        );
+
+        comprobar(
+            $imagenes->existe($ruta),
+            'Y el fichero anterior sigue existiendo, que es lo que evita perderlo'
+        );
+
+        $rutaSustituida = $imagenes->sustituir($ruta, $otraRuta, 'imagen', $campanaId);
+
+        comprobarIgual($otraRuta, $rutaSustituida, 'Si se sube otra, sustituir() devuelve la nueva');
+
+        comprobar(
+            !$imagenes->existe($ruta),
+            'Y borra la anterior, que ya no usa nadie'
+        );
+
+        // ---- 1.8. borrarCampana() no sale de uploads -------------------------
+        //
+        // Se comprueba con un identificador inventado que ademas apunta fuera.
+        // borrarCampana() solo recibe un int, asi que el ataque tendria que ir
+        // por la comprobacion str_starts_with() que hace, y esto la ejercita.
+        comprobarIgual(
+            0,
+            $imagenes->borrarCampana(0),
+            'borrarCampana() con identificador 0 no borra nada'
+        );
+
+        comprobar(
+            is_file(\App\Core\Aplicacion::raiz() . 'config/config.php'),
+            'Y config/config.php sigue en su sitio, que es lo que de verdad importa'
+        );
+
+        // ---- 1.9. La extension sale del contenido, no del nombre -------------
+        //
+        // Se guarda un PNG con nombre .jpg. Si el nombre mandara, se guardaria
+        // como .jpg y con extension .jpg seria un fichero que no es lo que dice.
+        $conNombreFalso = sys_get_temp_dir() . '/caso20-enga-no.jpg';
+        escribirImagenDePrueba($conNombreFalso);
+
+        $rutaConNombreFalso = $imagenes->guardar($conNombreFalso, $campanaId);
+        @unlink($conNombreFalso);
+
+        comprobar(
+            str_ends_with($rutaConNombreFalso, '.png'),
+            'Una imagen de verdad con extension .jpg se guarda como lo que su contenido dice, no como su nombre'
+        );
+
+        comprobarContiene(
+            $rutaConNombreFalso,
+            '/',
+            'Y la ruta devuelta es relativa a la carpeta de la campana'
+        );
+
+        // =====================================================================
+        // PARTE 2. APACHE, QUE NECESITA SERVIDOR
+        // =====================================================================
+        //
+        // Todo lo de arriba es el servicio. Falta lo que solo se puede ver con
+        // el servidor delante: que la imagen se sirva de verdad, y que un
+        // .php en la misma carpeta no se ejecute. Esto ultimo lo sostiene
+        // uploads/.htaccess y no el codigo, asi que probarlo leyendo el fichero
+        // no probaria nada.
+
+        if ($servidor === null) {
+            echo '  -> la parte de Apache se omite: sin servidor no hay quien sirva el fichero', PHP_EOL;
+
+            return;
+        }
+
+        // La URL se compone con el prefijo porque las imagenes cuelgan de la
+        // raiz del proyecto, no de una ruta de la aplicacion.
+        $imagen = peticionWeb($servidor, '/uploads/' . $rutaConNombreFalso);
+
+        comprobar(
+            $imagen['estado'] === 200,
+            'La imagen guardada la sirve Apache con estado 200',
+            'Ha contestado ' . $imagen['estado'] . '. Si es 403, el .htaccess de la raiz esta '
+                . 'bloqueando la carpeta uploads entera y las imagenes del panel no se ven nunca.'
+        );
+
+        comprobar(
+            $imagen['cabeceras'] !== '',
+            'Y llega con cabeceras, que es lo que significa que la ha servido el servidor de ficheros'
+        );
+
+        comprobar(
+            stripos($imagen['cabeceras'], 'image/') !== false,
+            'Y con un tipo MIME de imagen, no como un fichero de texto',
+            'Las cabeceras empiezan asi: ' . substr($imagen['cabeceras'], 0, 120)
+        );
+
+        // ---- 2.2. Un .php en esa carpeta no se ejecuta ------------------------
+        //
+        // La ultima barrera de D14 y del apartado 13.2. Se planta un fichero
+        // real con una marca que delataria la ejecucion y se pide por HTTP: si
+        // Apache lo ejecutara, el cuerpo seria «EJECUTADO».
+        $plantado = \App\Core\Aplicacion::raiz() . 'uploads/caso20-plantado.php';
+
+        if (!is_file($plantado)) {
+            file_put_contents($plantado, "<?php echo 'MARCA-CASO20-EJECUTADO'; ?>\n");
+        }
+
+        // Se pide con POST y no con GET a proposito: si Apache lo ejecutara, el
+        // metodo no cambiaria nada, pero mandarlo como POST deja claro que no
+        // se esta comprobando solo que un GET no lo ejecuta.
+        $ejecutado = peticionWeb($servidor, '/uploads/caso20-plantado.php', ['metodo' => 'POST']);
+        $cuerpoEjecutado = (string) $ejecutado['cuerpo'];
+
+        comprobar(
+            !str_contains($cuerpoEjecutado, 'MARCA-CASO20-EJECUTADO'),
+            'Un .php en la carpeta uploads no se ejecuta: Apache no ha devuelto la marca que lleva dentro',
+            'Ha devuelto ' . var_export(substr($cuerpoEjecutado, 0, 120), true)
+        );
+
+        comprobar(
+            $ejecutado['estado'] === 403,
+            'Y contesta 403, que es la respuesta que evita que alguien se entere de que hay un PHP ahi'
+        );
+
+        unlink($plantado);
+
+        // ---- 2.3. Las imagenes de verdad se ven en la pantalla de resultado --
+        //
+        // El caso 8 de la especificacion pide comprobar que lo configurado en el
+        // panel aparece en las pantallas. Esta es la comprobacion de que la
+        // ruta guardada llega al HTML: que se pinte el <img> con esa ruta.
+        $visual = (new \App\Models\ConfiguracionVisual())->leer($campanaId);
+        $visual['resultado_premio_ruta'] = $rutaConNombreFalso;
+        (new \App\Models\ConfiguracionVisual())->guardar($campanaId, $visual);
+
+        comprobarIgual(
+            $rutaConNombreFalso,
+            (new \App\Models\ConfiguracionVisual())->leer($campanaId)['resultado_premio_ruta'] ?? '',
+            'La ruta guardada se vuelve a leer igual, sin que nada la haya cambiado por el camino'
+        );
+
+        // Las tres pantallas del apartado 5 tienen que ensenarsela a la clienta:
+        // el formulario, el resultado con premio y el resultado sin premio. La
+        // de resultado elige entre las dos imagenes segun lo que salio, asi que
+        // hay que pintarla dos veces.
+        $htmlResultado = resultadoDePantallaEnCrudo($campanaId, true);
+
+        comprobarContiene(
+            $htmlResultado,
+            'uploads/' . $rutaConNombreFalso,
+            'La pantalla de resultado pinta la imagen de premio que hay configurada'
+        );
+
+        comprobar(
+            str_contains($htmlResultado, '<img'),
+            'Y lo hace con una etiqueta img de verdad, no con el texto de la ruta'
+        );
+
+        $htmlSinPremio = resultadoDePantallaEnCrudo($campanaId, false);
+
+        comprobarNoContiene(
+            $htmlSinPremio,
+            'resultado_premio_ruta',
+            'Y la pantalla de resultado sin premio no usa la imagen de premio'
+        );
+
+        // ---- 2.4. Los banners salen en las tres pantallas -------------------
+        //
+        // El panel guardaba banner_sup_ruta y banner_pie_ruta y las telas de
+        // participacion no las pintaban: se podian subir dos imagenes, verlas en
+        // la vista previa del panel y no aparecer nunca en la campana. El caso 8
+        // pide que lo configurado se vea, asi que aqui se comprueba en las tres
+        // pantallas del apartado 5.
+        $visual['banner_sup_ruta'] = $rutaConNombreFalso;
+        $visual['banner_sup_alt'] = 'Cartel de la promocion';
+        $visual['banner_pie_ruta'] = $rutaConNombreFalso;
+        $visual['banner_pie_alt'] = 'Aviso del pie';
+        (new \App\Models\ConfiguracionVisual())->guardar($campanaId, $visual);
+
+        $htmlFormulario = formularioDePantallaEnCrudo($campanaId);
+        $htmlResultado = resultadoDePantallaEnCrudo($campanaId, true);
+        $htmlSinPremio = resultadoDePantallaEnCrudo($campanaId, false);
+        $pantallas = [
+            'formulario'           => $htmlFormulario,
+            'resultado con premio' => $htmlResultado,
+            'resultado sin premio' => $htmlSinPremio,
+        ];
+
+        foreach ($pantallas as $nombreDePantalla => $htmlDePantalla) {
+            comprobarContiene(
+                $htmlDePantalla,
+                'uploads/' . $rutaConNombreFalso,
+                'El banner configurado se ve en la pantalla de ' . $nombreDePantalla
+            );
+
+            comprobarContiene(
+                $htmlDePantalla,
+                'Cartel de la promocion',
+                'Y con su texto alternativo, que es lo que lee el lector de pantalla'
+            );
+        }
+
+        comprobarNoContiene(
+            $htmlFormulario,
+            'resultado_premio_ruta',
+            'El formulario no se lleva por delante la imagen de resultado, que es de otra pantalla'
+        );
+    } finally {
+        // La red de seguridad se encarga del resto: borra la carpeta de la
+        // campana y su contenido, y quita el SetEnv si llego a ponerse.
+        (new \App\Services\Imagenes())->borrarCampana($campanaId > 0 ? $campanaId : 999999);
+
+        @unlink(\App\Core\Aplicacion::raiz() . 'uploads/caso20-plantado.php');
+
+        if ($escenario !== null) {
+            borrarEscenarioDeAdjudicacion();
+        }
+    }
+}
+
+/**
+ * Escribe una imagen valida en la ruta indicada y la devuelve.
+ *
+ * Se escribe un PNG de 1x1 con bytes fijos, sin usar GD, porque en este
+ * entorno no hay GD ni Imagick y el servicio los necesita para validar. Es la
+ * unica forma de tener un fichero que finfo y getimagesize reconozcan de verdad.
+ *
+ * @param string $ruta Ruta donde se escribe el fichero.
+ *
+ * @return string La ruta indicada, para poder encadenar la llamada.
+ */
+function escribirImagenDePrueba(string $ruta): string
+{
+    $png = base64_decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    );
+
+    file_put_contents($ruta, $png === false ? '' : $png);
+
+    return $ruta;
+}
+
+/**
+ * Pinta la pantalla de participacion y devuelve el HTML entero.
+ *
+ * Lo normal en la suite es mirar el h1 para saber si hubo premio, y aqui hace
+ * falta el HTML completo, porque lo que se busca es una etiqueta concreta que
+ * solo aparece si la vista ha decidido pintar la imagen.
+ *
+ * @param int  $campanaId Campana cuya pantalla se quiere pintar.
+ * @param bool $premio    Si se pinta el resultado con premio o sin el.
+ *
+ * @return string El HTML de la pantalla.
+ */
+function resultadoDePantallaEnCrudo(int $campanaId, bool $premio): string
+{
+    // No se inserta una participacion de verdad: a la vista solo le hacen
+    // falta cuatro datos, y escribir en participaciones por pintar una pantalla
+    // seria ensuciar la base por una comprobacion que no va de adjudicacion.
+    //
+    // La forma de $resultado es la que devuelve el motor, y la vista deduce de
+    // ella si hubo premio: no hay que pasar «premio» como bandera aparte, o la
+    // pantalla se probaria con una forma que el motor nunca devuelve.
+    return \App\Core\Vista::renderizar('participacion/resultado', [
+        'campana'   => (new \App\Models\Promocion())->exigirPorId($campanaId),
+        'visual'    => (new \App\Models\ConfiguracionVisual())->leer($campanaId),
+        'resultado' => [
+            'resultado'          => $premio ? 'premio' : 'sin_premio',
+            'codigo_reclamacion' => '',
+            'motivo_texto'       => '',
+        ],
+        'destino'   => 'azafata/promociones/' . $campanaId . '/participar',
+    ]);
+}
+
+/**
+ * Pinta la pantalla del formulario de participacion y devuelve el HTML entero.
+ *
+ * Es la primera de las tres pantallas del apartado 5. Se pinta suelta, con un
+ * tramo y sin campos, porque lo que se mira es si el banner llega al HTML y no
+ * que el formulario tenga algo que rellenar.
+ *
+ * @param int $campanaId Campana cuyo formulario se quiere pintar.
+ *
+ * @return string El HTML de la pantalla.
+ */
+function formularioDePantallaEnCrudo(int $campanaId): string
+{
+    return \App\Core\Vista::renderizar('participacion/formulario', [
+        'campana'       => (new \App\Models\Promocion())->exigirPorId($campanaId),
+        'visual'        => (new \App\Models\ConfiguracionVisual())->leer($campanaId),
+        'campos'        => [],
+        'tramo'         => null,
+        'reglas'        => [],
+        'titulo'        => 'Participar',
+        'idempotencia'  => 'caso20',
+        'csrf'          => '',
+        'destino'       => 'azafata/promociones/' . $campanaId . '/participar',
+    ]);
+}
+
+/**
+ * Registra una limpieza que se ejecuta al final del caso 20, pase lo que pase.
+ *
+ * @param callable():void $limpieza Lo que hay que dejar como estaba.
+ *
+ * @return void
+ */
+function registrarLimpiezaCaso20(callable $limpieza): void
+{
+    register_shutdown_function(static function () use ($limpieza): void {
+        try {
+            $limpieza();
+        } catch (Throwable $error) {
+            fwrite(STDERR, '[pruebas] La limpieza del caso 20 no ha podido terminar: '
+                . $error->getMessage() . PHP_EOL);
+        }
+    });
+}
+
+/**
  * Lista de casos disponibles, indexada por numero.
  *
  * @var array<int, callable():void>
@@ -5079,6 +5644,7 @@ const PRUEBAS = [
     17 => 'caso17',
     18 => 'caso18',
     19 => 'caso19',
+    20 => 'caso20',
 ];
 
 // -----------------------------------------------------------------------------

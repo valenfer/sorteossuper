@@ -178,6 +178,9 @@ function abrirSocketWeb(string $host, int $puerto, float $segundos = 10.0)
  *                                          una peticion GET.
  * @param string                  $cookie Cabecera Cookie con la sesion, o
  *                                          cadena vacia.
+ * @param string                  $metodo Metodo HTTP. Si no se dice, sale de si
+ *                                          hay cuerpo: GET si no hay campos y
+ *                                          POST si los hay.
  *
  * @return void
  */
@@ -187,10 +190,19 @@ function escribirPeticionWeb(
     int $puerto,
     string $ruta,
     ?array $campos,
-    string $cookie
+    string $cookie,
+    string $metodo = ''
 ): void {
+    // El metodo se deduce de si hay cuerpo o no, salvo que se pase otro. Hace
+    // falta poder pasarlo porque hay peticiones sin cuerpo que no son GET: el
+    // caso 20 pide un .php de la carpeta de subidas con POST, y mandarlo como
+    // GET probaria otra peticion y no la que se quiere comprobar.
+    if ($metodo === '') {
+        $metodo = $campos === null ? 'GET' : 'POST';
+    }
+
     $cabeceras = [
-        ($campos === null ? 'GET ' : 'POST ') . $ruta . ' HTTP/1.1',
+        $metodo . ' ' . $ruta . ' HTTP/1.1',
         'Host: ' . $host . ':' . $puerto,
         'Accept: text/html',
         'Accept-Encoding: identity',
@@ -335,7 +347,8 @@ function descifrarTroceado(string $cuerpo): string
  *                                       localizarServidorWeb().
  * @param string               $ruta     Ruta dentro de la aplicacion, con la
  *                                       barra inicial y sin el prefijo.
- * @param array<string, mixed> $opciones «campos» (array o null) y «cookie»
+ * @param array<string, mixed> $opciones «metodo» (string, GET por defecto),
+ *                                       «campos» (array o null) y «cookie»
  *                                       (string).
  *
  * @return array<string, mixed> Respuesta con las mismas claves que
@@ -361,7 +374,8 @@ function peticionWeb(array $servidor, string $ruta, array $opciones = []): array
         (int) $servidor['puerto'],
         (string) $servidor['prefijo'] . $ruta,
         $opciones['campos'] ?? null,
-        (string) ($opciones['cookie'] ?? '')
+        (string) ($opciones['cookie'] ?? ''),
+        (string) ($opciones['metodo'] ?? '')
     );
 
     return leerRespuestaWeb($socket);

@@ -68,6 +68,38 @@ $varios = (int) ($reglas['exigir_codigo'] ?? 0) === 1
     || (int) ($reglas['verificar_ticket'] ?? 0) === 1;
 ?>
 
+<?php /* Los banners van fuera del «section.panel» a proposito: el cartel de
+       arriba es lo primero que ve la clienta al llegar y el del pie es lo
+       ultimo que lee al enviar, y ninguno de los dos es parte del formulario.
+       Si estuvieran dentro, el h1 dejaria de ser lo primero que aparece en
+       pantalla de arriba abajo, que es lo que hace que un lector de pantalla
+       salte directamente al contenido. */
+$bannerSup = trim((string) ($visual['banner_sup_ruta'] ?? ''));
+$bannerSupAlt = trim((string) ($visual['banner_sup_alt'] ?? ''));
+$bannerPie = trim((string) ($visual['banner_pie_ruta'] ?? ''));
+$bannerPieAlt = trim((string) ($visual['banner_pie_alt'] ?? ''));
+
+// El texto alternativo no puede quedar vacio: una imagen que solo dice
+// «imagen» no le sirve a nadie, y si la administratora no lo ha escrito se cae al
+// nombre del comercio en vez de dejar el hueco sin rellenar, que es peor.
+$comercio = trim((string) ($campana['comercio_nombre'] ?? ''));
+
+if ($bannerSupAlt === '') {
+    $bannerSupAlt = $comercio !== '' ? $comercio : 'Promocion';
+}
+
+if ($bannerPieAlt === '') {
+    $bannerPieAlt = $bannerSupAlt;
+}
+?>
+
+<?php if ($bannerSup !== ''): ?>
+    <img
+        class="banner banner-superior"
+        src="<?= Vista::e(Aplicacion::asset('uploads/' . ltrim($bannerSup, '/'))) ?>"
+        alt="<?= Vista::e($bannerSupAlt) ?>">
+<?php endif; ?>
+
 <section class="panel">
     <h1><?= Vista::e($titulo) ?></h1>
 
@@ -164,3 +196,10 @@ $varios = (int) ($reglas['exigir_codigo'] ?? 0) === 1
         </p>
     </form>
 </section>
+
+<?php if ($bannerPie !== ''): ?>
+    <img
+        class="banner banner-pie"
+        src="<?= Vista::e(Aplicacion::asset('uploads/' . ltrim($bannerPie, '/'))) ?>"
+        alt="<?= Vista::e($bannerPieAlt) ?>">
+<?php endif; ?>

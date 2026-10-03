@@ -19,7 +19,12 @@
 
 # --- No ejecutar NADA de este directorio -------------------------------------
 # SetHandler none anula cualquier manejador heredado, Included Files, mod_php o
-# mod_perl, y elimina la ejecucion de PHP. Es la proteccion principal.
+# mod_perl, y elimina la ejecucion de PHP. Es la proteccion principal, y por eso
+# va antes que las demas y sin IfModule: si el modulo que hace falta no esta,
+# Apache da un error de configuracion al arrancar en vez de dejar la carpeta
+# desprotegida en silencio.
+SetHandler none
+Options -ExecCGI -Indexes -Includes
 <IfModule mod_mime.c>
     RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pl .py .cgi .asp .jsp
     RemoveType .php .phtml .php3 .php4 .php5 .php7 .php8 .phps
@@ -50,6 +55,8 @@
 </IfModule>
 
 # --- No heredar permisos de ejecucion ---------------------------------------
+# RemoveHandler por extension, que es la parte que sobrevive aunque SetHandler se
+# pierda al reiniciar con otra configuracion.
 <IfModule mod_mime.c>
     RemoveHandler .php
 </IfModule>

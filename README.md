@@ -418,6 +418,13 @@ DNI en el navegador: se resuelve en el servidor, con una huella HMAC
   `auditoria` (D18).
 - **Registro de intentos denegados** en `storage/logs/acceso.log`, aparte del
   log de errores del sistema.
+- **Lo que se sube a `uploads/` se sirve y no se ejecuta.** Las imágenes tienen que
+  poder verse, así que esa carpeta está fuera de la lista de directorios que el
+  `.htaccess` de la raíz devuelve con 403, y tiene una regla propia que las sirve
+  sin pasar por PHP. La ejecución se corta en `uploads/.htaccess`, que anula
+  cualquier manejador heredado (`SetHandler none`), desactiva `ExecCGI`, índices e
+  `Includes`, quita los manejadores de PHP y CGI por extensión y devuelve 403 a
+  cualquier script. `app`, `config`, `sql`, `tests` y `bin` sí siguen bloqueados.
 
 **Limitación conocida.** El límite de intentos se guarda en la sesión del
 navegador. Un atacante que borre las cookies empieza de cero, así que frena el
@@ -558,6 +565,29 @@ sesión, y comprueba que las dos llegaron al mismo tiempo. Antes de darla por bu
 se comprobó que la prueba muerde: sin el cerrojo retenido, o con una sola cookie
 para las dos peticiones, falla. Es la diferencia entre una prueba de concurrencia y
 una prueba de mirar dos veces si el mismo caso da lo mismo.
+
+**Terminado (hito 9).** Las imágenes: validación, seguridad y las tres pantallas.
+
+- **`Imagenes` decide por el contenido, no por el nombre.** La extensión sale de
+  `finfo` y de `getimagesize()`, así que un PNG con nombre `.jpg` se guarda como
+  `.png`. Las rutas se validan antes de escribir nada: nada de traversal, rutas
+  absolutas, contrabarras, byte nulo, `.svg` ni `.php`. `guardar()` mueve el origen
+  en vez de copiarlo, el nombre lo pone el servicio con el prefijo de la
+  configuración, `sustituir()` borra la anterior y `borrarCampana()` no sale de
+  `uploads`.
+- **`uploads/` se sirve y no se ejecuta.** Las imágenes tienen que verse, así que
+  `uploads` sale de la lista de directorios prohibidos de la raíz y gana una regla
+  propia que corta antes del front controller. Lo que no puede pasar es ejecutarse
+  nada de ahí, y eso lo prohíbe `uploads/.htaccess`: `SetHandler none`, sin
+  `ExecCGI`, sin índices y sin `Includes`, y un 403 a cualquier script.
+- **Los banners ahora sí se ven.** `banner_sup_ruta` y `banner_pie_ruta` se guardaban
+  y se editaban en el panel, pero ninguna pantalla de participación los pintaba: se
+  podían subir los dos carteles y no aparecer nunca. Las dos vistas los pintan ya,
+  con su texto alternativo.
+
+Las pruebas lo cubren con el caso 20, y antes de darlo por bueno se comprobó que la
+prueba muerde: volviendo a meter `uploads` en la lista de la raíz, o quitando el
+`SetHandler none`, el caso falla.
 
 **Cómo saber si está sano.** Con el servidor arrancado:
 

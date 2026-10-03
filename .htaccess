@@ -20,12 +20,20 @@
 
     # --- 1. Directorios internos: prohibido entrar por la URL ---------------
     # Estos directorios contienen codigo PHP que se ejecuta desde el nucleo,
-    # credenciales en config/config.php, el esquema SQL, las pruebas y los
-    # ficheros subidos. Ninguno debe servirse como respuesta HTTP.
+    # credenciales en config/config.php, el esquema SQL y las pruebas. Ninguno
+    # debe servirse como respuesta HTTP.
     #
     # La bandera [F] devuelve 403 Forbidden y detiene el proceso. Es
     # preferible a [R=404] porque no sugiere que el recurso no existe.
-    RewriteRule ^(app|config|sql|tests|bin|uploads)/ - [F,L]
+    #
+    # uploads NO esta aqui, y no por descuido. Las imagenes que sube el
+    # administrador se sirven desde ahi y tienen que verse: bloquearlas hacia
+    # que el panel aceptase ficheros, los guardase y las pantallas pintasen un
+    # <img> que Apache responde con un 403, que es justo el fallo que aparece
+    # cuando nadie abre la pagina con el servidor delante. Lo que no se puede es
+    # ejecutar nada de ahi, y eso lo prohibe uploads/.htaccess con SetHandler
+    # none, RemoveHandler y el FilesMatch que devuelve 403 a cualquier script.
+    RewriteRule ^(app|config|sql|tests|bin)/ - [F,L]
 
     # --- 2. Ficheros internos sueltos, en la raiz --------------------------
     # El .md es la especificacion y si puede leerse, pero el resto de ficheros
@@ -37,6 +45,15 @@
     # navegador puede leer directamente. La regla [L] los detiene antes de que
     # lleguen al front controller, porque un .css no debe pasar por PHP.
     RewriteRule ^assets/ - [L]
+
+    # --- 3 bis. Las imagenes de la campana, tambien tal cual ---------------
+    # Van aparte de assets porque no son ficheros del proyecto sino contenido
+    # que sube el administrador, y porque los borraria el .gitignore de
+    # uploads/. Si se dejaran caer en el front controller, una peticion por cada
+    # imagen de cada campana pasaria por PHP solo para devolver un fichero que
+    # Apache ya sabe servir. Los ficheros ejecutables de ahi no llegan aqui: los
+    # rechaza uploads/.htaccess antes que esta regla.
+    RewriteRule ^uploads/ - [L]
 
     # --- 4. Todo lo demas pasa por el front controller ----------------------
     # El parametro r recoge la ruta pedida y la resuelve app/Core/Router.php.

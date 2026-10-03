@@ -954,6 +954,35 @@ table.tabla tbody tr:last-child td {
 }
 
 /* --------------------------------------------------------------------------
+   Los banners de la campana
+   --------------------------------------------------------------------------
+   El cartel de arriba y el de pie los sube la administratora desde el panel y
+   salen en las tres pantallas de la participacion. Se estiran al ancho del
+   contenido y respetan la altura que tenga la imagen: ponerles un alto fijo
+   deformaria un cartel vertical, que es justo el caso para el que se suben.
+
+   El margen lateral se pone con auto en vez de heredar el que lleva el resto
+   del bloque, porque el ancho se calcula con los margenes: sin eso, el borde
+   lateral se sumaria al 100% y la imagen se saldria de la pantalla en cuanto
+   hubiera barra de desplazamiento vertical. */
+.banner {
+    display: block;
+    height: auto;
+    max-width: 100%;
+    margin-inline: auto;
+    border-radius: .4rem;
+}
+
+.banner-superior {
+    margin-block-end: 1.2rem;
+}
+
+.banner-pie {
+    margin-block-start: 1.2rem;
+    margin-block-end: 0;
+}
+
+/* --------------------------------------------------------------------------
    Pantallas provisionales del hito 1 y de la azafata
    --------------------------------------------------------------------------
    Las clases que quedan sueltas aqui no son del panel: son de las pantallas

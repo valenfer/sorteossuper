@@ -54,7 +54,7 @@ Lo que se espera ahora mismo, exactamente:
 | Comprobación | Resultado esperado |
 | --- | --- |
 | `verificar_docs.php` | `Todo correcto: 75 ficheros, sin problemas` |
-| `tests\run.php` | `Todo correcto: 21 casos ejecutados, 546 comprobaciones` |
+| `tests\run.php` | `Todo correcto: 22 casos ejecutados, 587 comprobaciones` |
 | `instalar.php --diagnostico` | `Diagnostico terminado`, sin ninguna escritura |
 | `instalar.php` | Idempotente: se puede repetir sin romper nada |
 | `enviar_correos.php` | Enviados 0, fallidos 0 con la cola vacía, sin error |
@@ -148,7 +148,7 @@ que es D6, es `cb9b714`, el del hito 9 es `311b23d` y el del hito 10 es `cf29f14
    plan y el calendario discrepan, y si la revisión manual debería tener su propio
    historial de auditoría.
 
-**Antes de escribir código nuevo, tres avisos.**
+**Antes de escribir código nuevo, cinco avisos.**
 
 - La purga vacía correos en estado «pendiente» si alguien la llama mal, y eso
   significa que el worker manda un correo en blanco con el código de reclamación

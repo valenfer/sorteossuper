@@ -615,7 +615,7 @@ class Aplicacion
     public static function asset(string $ruta): string
     {
         $ruta = ltrim($ruta, '/');
-        $fichero = self::$raiz . 'assets/' . $ruta;
+        $fichero = self::$raiz . $ruta;
 
         $version = is_file($fichero) ? substr((string) md5_file($fichero), 0, 8) : '0';
 
@@ -893,3 +893,4 @@ class Aplicacion
             ->format('Y-m-d H:i:s');
     }
 }
+

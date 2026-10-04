@@ -138,20 +138,18 @@ que romper».
 Este es el resumen para retomar el trabajo. Si solo se lee una cosa de todo el
 documento, que sea esto.
 
-**Punto exacto en el que está.** Los hitos 0 a 10 están cerrados y subidos a
-`origin/master`, y las decisiones D4, D6 y D19 están confirmadas. El hito 11 está
-escrito y probado, y lo que falta es su commit: el árbol de trabajo tiene los cambios
-del hito 11 sin subir. El commit de
+**Punto exacto en el que está.** Los hitos 0 a 11 están cerrados, y las decisiones D4,
+D6 y D19 están confirmadas. No hay nada a medias: el árbol de trabajo está limpio y las
+tres comprobaciones pasan. El commit de
 D19 es `c6e91c4`, el de D4 es `dbf2fdf`, el del hito 7 es `51fec02`, el del hito 8,
-que es D6, es `cb9b714`, el del hito 9 es `311b23d` y el del hito 10 es `cf29f14`.
-`master` está sincronizado con `origin/master`.
+que es D6, es `cb9b714`, el del hito 9 es `311b23d`, el del hito 10 es `cf29f14` y el
+del hito 11 es `bdb193d`. Lo único que queda por hacer es subir `master` a
+`origin/master`.
 
 **Lo siguiente, por este orden.**
 
-1. **Commit del hito 11.** Las tres comprobaciones de la sección 2 pasan y el árbol
-   solo tiene los cambios de este hito. Va todo en un commit, con este párrafo
-   dentro, y en el mensaje hay que decir que se cierra la pregunta de las unidades
-   que sobran y la del historial de la revisión manual.
+1. **Subir `master` a `origin/master`.** El hito 11 es el commit `bdb193d` y todavía no
+   está subido. Los once hitos caben en un `git push` normal.
 2. **Nada pendiente después de eso.** El calendario no se pasa del plan al añadir ni
    al mover, y las cuatro revisiones —añadir, mover, retirar y generar— dejan asiento.
    El caso 22 lo prueba y el caso 21 se ha reescrito para el contrato nuevo. La suite
@@ -1230,7 +1228,7 @@ caso 21 lo cazó a la primera, y por eso está aquí.
 **Cómo se comprueba.** El caso 21 son 41 comprobaciones. La suite son 22 casos y 587
 comprobaciones.
 
-### Hito 11 — El calendario no se pasa del plan y cada revisión deja asiento
+### Hito 11 — El calendario no se pasa del plan y cada revisión deja asiento (`bdb193d`)
 
 **Lo que había debajo.** Quedaban dos decisiones de producto sin cerrar, y las dos
 eran del mismo sitio: el calendario se podía revisar a mano —añadir, mover y retirar— y

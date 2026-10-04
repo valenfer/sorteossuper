@@ -165,6 +165,40 @@ function comprobarFalla(string $clase, callable $operacion, string $descripcion)
 }
 
 /**
+ * Comprueba que un codigo falla y devuelve el fallo, para poder mirarlo.
+ *
+ * Es comprobarFalla() con una cosa mas: devuelve la excepcion. Hace falta cuando
+ * lo que se quiere comprobar no es que la operacion falle, sino QUE DICE el
+ * fallo. «No cabe en el plan» y «el tramo no existe» fallan los dos, y un
+ * mensaje equivocado en el sitio equivocado es un fallo que comprobarFalla()
+ * declara bueno.
+ *
+ * @param string   $clase       Nombre completo de la excepcion que se espera.
+ * @param callable $operacion   Codigo que deberia lanzar el fallo.
+ * @param string   $descripcion Que se esta comprobando.
+ *
+ * @return \Throwable La excepcion capturada.
+ *
+ * @throws \RuntimeException Si la operacion no falla con esa clase.
+ */
+function capturarFalla(string $clase, callable $operacion, string $descripcion): Throwable
+{
+    try {
+        $operacion();
+    } catch (Throwable $e) {
+        comprobar(
+            $e instanceof $clase,
+            $descripcion,
+            'se esperaba ' . $clase . ' y se produjo ' . get_class($e) . ': ' . $e->getMessage()
+        );
+
+        return $e;
+    }
+
+    throw new \RuntimeException($descripcion . ': no se produjo ninguna excepcion');
+}
+
+/**
  * Comprueba que un texto contiene un fragmento.
  *
  * Se usa con el HTML de las pantallas. Se busca el fragmento tal cual, sin
@@ -2762,10 +2796,17 @@ function caso12(): void
  */
 function caso13(): void
 {
-    // Cuatro horas y ningun correo activado: con el correo apagado el codigo de
+    // Cuatro premios y ningun correo activado: con el correo apagado el codigo de
     // reclamacion tiene que verse en pantalla, porque es la unica via que le
     // queda a la persona de recoger el premio. Ese es el estado de partida.
-    $escenario = crearEscenarioDeAdjudicacion(['10:00', '11:00', '12:00', '13:00']);
+    //
+    // Las horas de los premios salen del reloj y no se escriben a mano, y no es
+    // mania: este caso va por la pantalla, asi que la participacion se registra con
+    // la hora de verdad y el motor solo entrega premios cuya hora ya ha pasado. Con
+    // las horas fijas -10:00, 11:00, 12:00 y 13:00- el caso solo pasaba a partir de
+    // las 13:00, y a las 09:33 la participacion salia «sin premio» y cinco
+    // comprobaciones caian sin que hubiera cambiado nada. Ver horasPasadasDeHoy().
+    $escenario = crearEscenarioDeAdjudicacion(horasPasadasDeHoy(4));
     $promocion = $escenario['promocion'];
 
     (new \App\Models\CampoFormulario())->sustituirTodos($promocion, [
@@ -5731,6 +5772,87 @@ function caso21(): void
         // =====================================================================
         // 2. ANADIR UNA UNIDAD
         // =====================================================================
+        // El generador ha dejado los cuatro pares de tramo y premio llenos: hay
+        // dos unidades de cada premio en cada tramo y dos unidades de plan. Anadir
+        // una tercera es pasar del plan, y el servicio lo rechaza. Es lo primero
+        // que se comprueba, porque es el cambio de contrato del hito 11 y porque
+        // todo lo que viene despues necesita un hueco de verdad, no uno simulado.
+        $antes = $calendario->contar($id);
+        $lleno = capturarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->crear($id, $tramos[0], $tipos[0], date('Y-m-d'), '12:30'),
+            'Con el par de tramo y premio ya completo, anadir una unidad se rechaza'
+        );
+
+        comprobarIgual(
+            $antes,
+            $calendario->contar($id),
+            'Y el rechazo no deja ninguna unidad nueva'
+        );
+
+        // El mensaje tiene que decir cuanto se pidio y cuanto hay. «No cabe» a
+        // secas deja al administrador yendo a otra pantalla a buscar los numeros.
+        comprobar(
+            strpos((string) ($lleno->errores()['tipo_premio_id'] ?? ''), 'pide 2') !== false,
+            'Y el error dice cuanto pedia el plan y cuanto hay, no solo que no cabe',
+            'mensaje: ' . (string) ($lleno->errores()['tipo_premio_id'] ?? '(ninguno)')
+        );
+
+        // ---- Para anadir hay que abrir sitio antes --------------------------
+        // Se retira una unidad a mano, que es la forma de abrirlo que tiene el
+        // administrador desde la misma pantalla. La retirada no la hace el caso 22
+        // para que aqui no se mezclen las dos mitades del contrato.
+        $paraRetirar = null;
+
+        foreach ($calendario->listar($id) as $fila) {
+            if (
+                (int) $fila['tramo_id'] === $tramos[0]
+                && (int) $fila['tipo_premio_id'] === $tipos[0]
+                && (string) $fila['estado'] === \App\Models\UnidadPremio::ESTADO_PROGRAMADA
+            ) {
+                $paraRetirar = $fila;
+
+                break;
+            }
+        }
+
+        comprobar(
+            $paraRetirar !== null,
+            'El escenario tiene una unidad programada del par que se va a abrir'
+        );
+
+        $calendario->retirar((int) ($paraRetirar['id'] ?? 0), $id, 'para abrir sitio en la prueba 21');
+
+        // ---- Y la pantalla avisa de que ahora falta -------------------------
+        // Esto es lo que pide el caso 2: al editar a mano, el panel tiene que
+        // decir que el calendario se ha separado del plan, y no limitarse a
+        // aceptarlo en silencio. Aqui la separacion va por debajo, que es la
+        // direccion legitima: retirar una unidad es una decision del
+        // administrador.
+        $desajustes = array_values(array_filter(
+            (new \App\Services\ConfiguracionPromocion())->compararPlanYCalendario($id),
+            static fn (array $fila): bool => (bool) $fila['cambia']
+        ));
+
+        comprobarIgual(
+            1,
+            count($desajustes),
+            'Retirar una unidad deja el par del tramo corto en una unidad'
+        );
+
+        $html = htmlDeAccion('ControladorCampana', 'calendario', ['id' => $id]);
+        comprobarContiene(
+            $html,
+            'Plan frente a calendario',
+            'Y la pantalla lo enseña, en vez de dejar que se note al repartir'
+        );
+        comprobarContiene(
+            $html,
+            'Faltan 1',
+            'Con las unidades que faltan, que es la direccion que se puede arreglar'
+        );
+
+        // ---- Y ahora si se puede anadir -------------------------------------
         $antes = $calendario->contar($id);
 
         // La fecha del POST es falsa y a proposito: el tramo manda. Y la hora, 12:30,
@@ -5771,36 +5893,33 @@ function caso21(): void
             'inicio: ' . ($nueva === null ? 'no existe' : (string) $nueva['inicio'])
         );
 
+        // El hueco se ha vuelto a llenar, y con el aviso disappears: el desajuste
+        // que se avisa es el que existe, no el que se ha arreglado.
+        comprobar(
+            array_values(array_filter(
+                (new \App\Services\ConfiguracionPromocion())->compararPlanYCalendario($id),
+                static fn (array $fila): bool => (bool) $fila['cambia']
+            )) === [],
+            'Rellenado el hueco, el calendario vuelve a cuadrar con el plan'
+        );
+
         limpiarPeticion();
 
-        // ---- Y la pantalla avisa de que el reparto ya no es el del plan ------
-        // Esto es lo que pide el caso 2: al editar a mano, el panel tiene que
-        // decir que el calendario se ha separado del plan, y no Limitarselo a
-        // aceptarlo en silencio.
-        $desajustes = array_values(array_filter(
-            (new \App\Services\ConfiguracionPromocion())->compararPlanYCalendario($id),
-            static fn (array $fila): bool => (bool) $fila['cambia']
-        ));
-        comprobar(
-            $desajustes !== [],
-            'Anadir una unidad a mano separa el calendario del plan, y la comparacion lo detecta'
+        // ---- Y con el par vuelto a llenar, otra unidad se rechaza otra vez ----
+        // El caso 22 cubre los dos limites con detalle. Aqui basta con que el
+        // rechazo no se haya quedado en la primera vez: un tope que solo se
+        // comprueba al principio de una pantalla es un tope que se esquiva
+        // recargando.
+        $sinPlan = capturarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->crear($id, $tramos[0], $tipos[0], date('Y-m-d'), '12:45'),
+            'Con el par ya relleno otra vez, una unidad mas se vuelve a rechazar'
         );
 
-        $html = htmlDeAccion('ControladorCampana', 'calendario', ['id' => $id]);
-        comprobarContiene(
-            $html,
-            'Plan frente a calendario',
-            'Y la pantalla lo enseña, en vez de dejar que se note al repartir'
-        );
-        comprobarContiene(
-            $html,
-            'Sobran 1',
-            'Con quantas unidades sobran de mas en el tramo tocado'
-        );
-        comprobarContiene(
-            $html,
-            '12:30',
-            'Incluida la unidad anadida a mano, que sale en la tabla'
+        comprobar(
+            strpos((string) ($sinPlan->errores()['tipo_premio_id'] ?? ''), 'ya esta completo') !== false,
+            'Y el mensaje es el del par lleno, no el de un tramo que no existe',
+            'mensaje: ' . (string) ($sinPlan->errores()['tipo_premio_id'] ?? '(ninguno)')
         );
 
         // ---- Una hora antes del tramo tampoco vale --------------------------
@@ -5886,30 +6005,77 @@ function caso21(): void
         // =====================================================================
         // 3. MOVER UNA UNIDAD
         // =====================================================================
-        $movible = $programadas[0];
-        $unidadId = (int) $movible['id'];
+        // Se mueve una unidad dentro de su propio tramo, que es el movimiento que
+        // tiene que seguir funcionando con el par lleno. La cuenta del destino
+        // excluye la unidad que se esta moviendo justamente para esto: sin la
+        // excepcion, cambiar una unidad de las 12:10 a las 12:15 se rechazaria
+        // porque el par ya tiene dos de dos, cuando no ha anadido nada.
+        $movible = null;
+
+        foreach ($programadas as $fila) {
+            if (
+                (int) $fila['tramo_id'] === $tramos[0]
+                && (int) $fila['tipo_premio_id'] === $tipos[1]
+            ) {
+                $movible = $fila;
+
+                break;
+            }
+        }
+
+        comprobar(
+            $movible !== null,
+            'El escenario tiene una unidad del segundo premio en el primer tramo'
+        );
+
+        $unidadId = (int) ($movible['id'] ?? 0);
+        $tramoAntes = (int) ($movible['tramo_id'] ?? 0);
 
         limpiarPeticion();
         enviarFormulario(
-            ['tramo_id' => $tramos[1], 'hora' => '15:45', 'fecha' => '2001-01-01'],
+            ['tramo_id' => $tramos[0], 'hora' => '15:45', 'fecha' => '2001-01-01'],
             '/admin/promociones/' . $id . '/calendario/' . $unidadId . '/mover'
         );
         htmlDeAccion('ControladorCampana', 'moverUnidad', ['id' => $id, 'unidad' => $unidadId]);
 
         $movida = $calendario->buscar($unidadId);
         comprobar(
-            $movida !== null && (int) $movida['tramo_id'] === $tramos[1],
-            'Mover cambia la unidad de tramo',
+            $movida !== null && (int) $movida['tramo_id'] === $tramoAntes,
+            'Mover dentro del mismo tramo deja la unidad en el mismo tramo',
             'tramo: ' . ($movida === null ? 'no existe' : (string) $movida['tramo_id'])
         );
         comprobar(
             $movida !== null && substr((string) $movida['inicio'], 11, 5) === '15:45',
-            'Y a la hora escrita, dentro del tramo de destino',
+            'Y a la hora escrita, dentro del tramo',
             'inicio: ' . ($movida === null ? 'no existe' : (string) $movida['inicio'])
         );
         comprobar(
             $movida !== null && (string) $movida['estado'] === \App\Models\UnidadPremio::ESTADO_PROGRAMADA,
             'Y sigue programada: mover no entrega ni adjudica'
+        );
+
+        // ---- Y a un tramo donde el par ya esta lleno, no ---------------------
+        // El destino es ahora el segundo tramo con el mismo premio, que lleva sus
+        // dos unidades de plan. Es el limite del hito 11, y aqui solo se comprueba
+        // que no rompe el servicio; el caso 22 lo mira con el mensaje y la
+        // auditoria.
+        $llenoAlMover = capturarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->mover($unidadId, $tramos[1], date('Y-m-d'), '15:45', $id),
+            'Mover a un par de tramo y premio que ya esta completo se rechaza'
+        );
+
+        comprobar(
+            strpos(
+                implode(' ', array_values($llenoAlMover->errores())),
+                'ya esta completo'
+            ) !== false,
+            'Y el error dice que el par esta lleno, con los numeros del plan',
+            'mensaje: ' . implode(' ', array_values($llenoAlMover->errores()))
+        );
+        comprobar(
+            (string) ($calendario->buscar($unidadId)['inicio'] ?? '') === date('Y-m-d') . ' 15:45:00',
+            'Y la unidad se queda en el tramo de origen, sin quedar a medio cambiar'
         );
 
         // ---- Un movimiento fallido se repinta con lo que se escribio --------
@@ -6069,6 +6235,451 @@ function caso21(): void
 }
 
 /**
+ * Caso 22: el calendario no se pasa del plan y cada revision deja asiento.
+ *
+ * El caso 21 comprueba que anadir, mover y retirar funcionan. Este comprueba las
+ * dos reglas del hito 11, que son las que hacen que esas tres operaciones sean
+ * seguras de usar en una campana en marcha:
+ *
+ * 1. El calendario no puede pasar del plan al anadir ni al mover, y el par que el
+ *    plan no reparte no admite unidades ni aunque este vacio.
+ * 2. Cada revision deja un asiento, con quien la hizo y con lo que habia antes.
+ *
+ * Las dos se comprueban juntas a proposito, porque se necesitan mutuamente: un
+ * tope sin asiento no se puede auditar, y un asiento sin tope solo sirve para
+ * anotar los errores que el propio sistema deja pasar.
+ *
+ * @return void
+ *
+ * @throws \RuntimeException Si un caso se deja a medias.
+ */
+function caso22(): void
+{
+    echo 'Caso 22: el calendario no se pasa del plan y cada revision deja asiento', PHP_EOL;
+
+    $principal = null;
+    $ajena = null;
+    $nombreUsuario = 'cal22';
+    $db = \App\Core\Aplicacion::db();
+
+    try {
+        $principal = crearEscenarioDePanel(['premios' => 2, 'tramos' => 2, 'sufijo' => 'cal22']);
+        $ajena = crearEscenarioDePanel(['premios' => 1, 'tramos' => 1, 'sufijo' => 'cal22-ajena']);
+
+        $id = (int) $principal['promocion'];
+        $tramos = array_map('intval', $principal['tramos']);
+        $tipos = array_map('intval', $principal['tipos']);
+        $otra = (int) $ajena['promocion'];
+
+        // El usuario existe para que el asiento tenga un nombre que comprobar. Sin
+        // el, todas las filas saldrian con la cadena vacia y la prueba pasaria
+        // sin haber probado que el nombre se copia.
+        $usuarioId = (new \App\Models\User())->crear(
+            $nombreUsuario,
+            'cal22-contrasena',
+            \App\Core\Autorizacion::ROL_ADMINISTRADOR,
+            'Administrador del caso 22',
+            null
+        );
+
+        $calendario = new \App\Services\Calendario();
+        $asientos = static fn (int $campanaId, string $accion): array => array_values(array_filter(
+            (new \App\Models\Auditoria())->listarPorCampana($campanaId, 200),
+            static fn (array $linea): bool => (string) $linea['accion'] === $accion
+        ));
+        $cuantasHay = static fn (int $campanaId): int => count(
+            (new \App\Models\Auditoria())->listarPorCampana($campanaId, 200)
+        );
+
+        // =====================================================================
+        // 1. GENERAR DEJA UN ASIENTO, Y NO UNO POR UNIDAD
+        // =====================================================================
+        $antesDeGenerar = $cuantasHay($id);
+        $generado = $calendario->generar($id, false, false, $usuarioId);
+
+        comprobar(
+            ($generado['generado'] ?? false) === true && (int) ($generado['unidades'] ?? 0) === 8,
+            'Se generan las ocho unidades del escenario',
+            'informe: ' . json_encode($generado, JSON_UNESCAPED_UNICODE)
+        );
+
+        comprobarIgual(
+            $antesDeGenerar + 1,
+            $cuantasHay($id),
+            'Y quedan ocho unidades y un solo asiento, no ocho asientos'
+        );
+
+        $generaciones = $asientos($id, \App\Models\Auditoria::ACCION_GENERACION);
+
+        comprobarIgual(1, count($generaciones), 'Hay exactamente un asiento de generacion');
+
+        if ($generaciones !== []) {
+            $fila = $generaciones[0];
+
+            comprobarIgual('calendario', (string) $fila['entidad'], 'El asiento apunta al calendario, no a una unidad');
+            comprobarIgual((string) $id, (string) $fila['entidad_id'], 'Y su identificador es el de la campana');
+
+            $antesDeLaGeneracion = json_decode((string) $fila['datos_antes'], true);
+            $despuesDeLaGeneracion = json_decode((string) $fila['datos_despues'], true);
+
+            comprobarIgual(
+                0,
+                (int) ($antesDeLaGeneracion['unidades'] ?? -1),
+                'El asiento dice que no habia ninguna unidad antes de generar'
+            );
+            comprobarIgual(
+                8,
+                (int) ($despuesDeLaGeneracion['creadas'] ?? -1),
+                'Y dice cuantas han salido, que es lo que se preguntara luego'
+            );
+
+            // El nombre se copia en el momento del cambio. La lista por campana no
+            // trae el identificador de usuario, asi que se va a la tabla: lo que
+            // importa es que la fila apunte a un usuario de verdad y no al cero
+            // que devuelve Autorizacion::usuarioId() sin sesion.
+            comprobarIgual(
+                $nombreUsuario,
+                (string) ($db->valor(
+                    'SELECT usuario_nombre FROM auditoria WHERE id = ?',
+                    [(int) $fila['id']]
+                ) ?? ''),
+                'Y guarda el nombre del usuario en el momento del cambio'
+            );
+
+            comprobarIgual(
+                $usuarioId,
+                (int) ($db->valor(
+                    'SELECT usuario_id FROM auditoria WHERE id = ?',
+                    [(int) $fila['id']]
+                ) ?? 0),
+                'Y tambien su identificador, que es lo que permite seguir a esa persona'
+            );
+        }
+
+        // =====================================================================
+        // 2. UN PLAN QUE NO CABE NO GENERA Y NO DEJA ASIENTO
+        // =====================================================================
+        // El generador diagnostica antes de escribir. Un asiento de «se ha generado
+        // el calendario» acompanado de un informe de cero unidades seria una
+        // manera muy comoda de mentir en la fila que mas se lee.
+        $calendario->generar($otra, false, false, $usuarioId);
+        $antesDeGenerar = $cuantasHay($otra);
+
+        $db->ejecutar(
+            'UPDATE asignaciones_tramo SET cantidad = 800 WHERE tramo_id = ?',
+            [(int) $ajena['tramos'][0]]
+        );
+
+        $imposible = $calendario->generar($otra, false, false, $usuarioId);
+
+        comprobar(
+            ($imposible['generado'] ?? true) === false && ($imposible['problemas'] ?? []) !== [],
+            'Un plan que no cabe en el tramo no genera nada'
+        );
+        comprobarIgual(
+            $antesDeGenerar,
+            $cuantasHay($otra),
+            'Y no deja un asiento de generacion que diga que si'
+        );
+
+        // =====================================================================
+        // 3. ANADIR CUANDO EL PAR YA ESTA COMPLETO
+        // =====================================================================
+        $antesDeAnadir = $cuantasHay($id);
+        $lleno = capturarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->crear($id, $tramos[0], $tipos[0], date('Y-m-d'), '12:30', $usuarioId),
+            'Anadir una unidad a un par que ya tiene todas las del plan se rechaza'
+        );
+
+        comprobarIgual(
+            8,
+            $calendario->contar($id),
+            'Y no se ha creado ninguna unidad'
+        );
+        comprobarIgual(
+            $antesDeAnadir,
+            $cuantasHay($id),
+            'Ni se ha escrito ningun asiento: un rechazo no es una revision'
+        );
+
+        $mensaje = (string) ($lleno->errores()['tipo_premio_id'] ?? '');
+
+        comprobar(
+            strpos($mensaje, 'pide 2') !== false && strpos($mensaje, 'hay 2') !== false,
+            'El error lleva los dos numeros, para que se sepa cuanto hay que subir o retirar',
+            'mensaje: ' . $mensaje
+        );
+
+        // =====================================================================
+        // 4. UN PAR QUE EL PLAN NO REPARTE NO ADMITE UNIDADES
+        // =====================================================================
+        // El plan se borra por debajo del calendario, que es como se queda una
+        // par de tramo y premio cuando se toca el plan desde la pantalla de
+        // cantidades. Un par vacio con dos unidades y cero de plan no puede
+        // aceptarse como si nada, porque es el otro camino de pasarse del plan.
+        $db->ejecutar(
+            'DELETE FROM asignaciones_tramo WHERE tramo_id = ? AND tipo_premio_id = ?',
+            [$tramos[1], $tipos[1]]
+        );
+
+        $sinPlan = capturarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->crear($id, $tramos[1], $tipos[1], date('Y-m-d'), '15:45', $usuarioId),
+            'Anadir a un par que el plan no reparte se rechaza, aunque este vacio'
+        );
+
+        comprobar(
+            strpos((string) ($sinPlan->errores()['tipo_premio_id'] ?? ''), 'no reparte') !== false,
+            'Y el mensaje dice que el tramo no reparte ese premio, que se arregla en las cantidades',
+            'mensaje: ' . (string) ($sinPlan->errores()['tipo_premio_id'] ?? '(ninguno)')
+        );
+        comprobarIgual(
+            $antesDeAnadir,
+            $cuantasHay($id),
+            'Ese rechazo tampoco deja asiento'
+        );
+
+        // =====================================================================
+        // 5. RETIRAR ABRE EL HUECO Y ANADIR LO RELLENA
+        // =====================================================================
+        $programadas = array_values(array_filter(
+            $calendario->listar($id),
+            static fn (array $u): bool => (string) $u['estado'] === \App\Models\UnidadPremio::ESTADO_PROGRAMADA
+        ));
+
+        $suelta = null;
+        $primeraDelSegundo = null;
+        $segundaDelSegundo = null;
+
+        foreach ($programadas as $fila) {
+            if ((int) $fila['tramo_id'] === $tramos[0] && (int) $fila['tipo_premio_id'] === $tipos[0] && $suelta === null) {
+                $suelta = $fila;
+            }
+
+            if ((int) $fila['tramo_id'] === $tramos[0] && (int) $fila['tipo_premio_id'] === $tipos[1]) {
+                if ($primeraDelSegundo === null) {
+                    $primeraDelSegundo = $fila;
+                } else {
+                    $segundaDelSegundo = $fila;
+                }
+            }
+        }
+
+        comprobar(
+            $suelta !== null && $primeraDelSegundo !== null && $segundaDelSegundo !== null,
+            'El escenario tiene las tres unidades que hacen falta para las pruebas siguientes'
+        );
+
+        $idSuelta = (int) ($suelta['id'] ?? 0);
+        $calendario->retirar($idSuelta, $id, 'se lleva un premio de mas', $usuarioId);
+
+        $retiradas = $asientos($id, \App\Models\Auditoria::ACCION_RETIRADA);
+
+        comprobarIgual(1, count($retiradas), 'Retirar una unidad deja un asiento propio');
+
+        if ($retiradas !== []) {
+            $antes = json_decode((string) $retiradas[0]['datos_antes'], true);
+            $despues = json_decode((string) $retiradas[0]['datos_despues'], true);
+
+            comprobarIgual(
+                \App\Models\UnidadPremio::ESTADO_PROGRAMADA,
+                (string) ($antes['estado'] ?? ''),
+                'El asiento guarda el estado que tenia antes'
+            );
+            comprobarIgual(
+                \App\Models\UnidadPremio::ESTADO_ANULADA,
+                (string) ($despues['estado'] ?? ''),
+                'Y el que ha quedado despues'
+            );
+            comprobarIgual(
+                'se lleva un premio de mas',
+                (string) ($despues['anulada_motivo'] ?? ''),
+                'Incluido el motivo, que es la mitad del motivo de que exista'
+            );
+        }
+
+        // Y con el hueco ya abierto, anadir vuelve a funcionar.
+        $nueva = $calendario->crear($id, $tramos[0], $tipos[0], date('Y-m-d'), '12:30', $usuarioId);
+
+        comprobar(
+            $nueva > 0 && (int) $calendario->buscar($nueva)['tramo_id'] === $tramos[0],
+            'Retirar una unidad abre el hueco, y anadir vuelve a poder hacer'
+        );
+
+        $altas = $asientos($id, \App\Models\Auditoria::ACCION_ALTA);
+
+        comprobarIgual(1, count($altas), 'Y el alta deja un asiento, con su propia accion');
+
+        if ($altas !== []) {
+            $datos = json_decode((string) $altas[0]['datos_despues'], true);
+
+            comprobarIgual(
+                (string) $nueva,
+                (string) $altas[0]['entidad_id'],
+                'El asiento del alta apunta a la unidad creada'
+            );
+            comprobar(
+                $altas[0]['datos_antes'] === null,
+                'Y no inventa un estado anterior para algo que no existia',
+                'datos_antes: ' . var_export($altas[0]['datos_antes'], true)
+            );
+            comprobarIgual(
+                $tramos[0],
+                (int) ($datos['tramo_id'] ?? -1),
+                'El asiento dice en que tramo ha quedado la unidad'
+            );
+            comprobarIgual(
+                2,
+                (int) ($datos['plan'] ?? -1),
+                'Y lleva cuanto pedia el plan para ese par'
+            );
+            comprobarIgual(
+                2,
+                (int) ($datos['calendario'] ?? -1),
+                'Y cuanto hay ya, que es la cuenta despues de insertar y no antes'
+            );
+        }
+
+        // Retirar otra vez la misma unidad no falla y si deja rastro. Retirar es
+        // idempotente a proposito —la pantalla no ofrece el boton, pero el servicio
+        // no puede depender de eso— y quien pulsa algo ha hecho algo.
+        $antesDeRepetir = count($retiradas);
+        $calendario->retirar($idSuelta, $id, 'otra vez', $usuarioId);
+
+        comprobarIgual(
+            $antesDeRepetir + 1,
+            count($asientos($id, \App\Models\Auditoria::ACCION_RETIRADA)),
+            'Retirar una unidad ya anulada vuelve a escribir asiento, en vez de no hacer nada'
+        );
+
+        // =====================================================================
+        // 6. MOVER DENTRO DE SU TRAMO SIEMPRE, Y A UN PAR LLENO NUNCA
+        // =====================================================================
+        $movible = (int) ($segundaDelSegundo['id'] ?? 0);
+        $antesDeMover = $cuantasHay($id);
+
+        // Dentro de su mismo par: la cuenta lo excluye y el movimiento no anade
+        // nada, asi que tiene que salir bien aunque el par este lleno.
+        $calendario->mover($movible, $tramos[0], date('Y-m-d'), '16:30', $id, $usuarioId);
+
+        comprobar(
+            substr((string) ($calendario->buscar($movible)['inicio'] ?? ''), 11, 5) === '16:30',
+            'Mover una unidad dentro de su propio tramo funciona aunque el par este completo'
+        );
+
+        $movimientos = $asientos($id, \App\Models\Auditoria::ACCION_CONFIGURACION);
+
+        comprobarIgual(1, count($movimientos), 'Y el movimiento deja un asiento');
+
+        if ($movimientos !== []) {
+            $antes = json_decode((string) $movimientos[0]['datos_antes'], true);
+            $despues = json_decode((string) $movimientos[0]['datos_despues'], true);
+
+            comprobarIgual(
+                $tramos[0],
+                (int) ($antes['tramo_id'] ?? -1),
+                'El asiento del movimiento guarda el tramo de origen'
+            );
+            comprobar(
+                (int) ($despues['tramo_id'] ?? -1) === $tramos[0]
+                    && substr((string) ($despues['inicio'] ?? ''), 11, 5) === '16:30',
+                'Y el de destino, con la hora escrita',
+                'despues: ' . json_encode($despues, JSON_UNESCAPED_UNICODE)
+            );
+        }
+
+        // A un par lleno de otro tramo, no. La unidad es del primer premio, y el
+        // par de destino son las 16:30 del segundo tramo, que lleva sus dos
+        // unidades de plan.
+        $llenoAlMover = capturarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->mover($nueva, $tramos[1], date('Y-m-d'), '16:30', $id, $usuarioId),
+            'Mover a un par completo se rechaza'
+        );
+
+        comprobarIgual(
+            $antesDeMover + 1,
+            $cuantasHay($id),
+            'El movimiento rechazado no escribe ni unidad ni asiento'
+        );
+        comprobar(
+            substr((string) ($calendario->buscar($nueva)['inicio'] ?? ''), 11, 5) === '12:30',
+            'Y la unidad se queda donde estaba, sin quedar a medio cambiar'
+        );
+        comprobar(
+            strpos(implode(' ', array_values($llenoAlMover->errores())), 'ya esta completo') !== false,
+            'Con un mensaje que explica que el par esta lleno',
+            'mensaje: ' . implode(' ', array_values($llenoAlMover->errores()))
+        );
+
+        // Y a un par que el plan no reparte, tampoco.
+        $sinPlanAlMover = capturarFalla(
+            \App\Core\ErrorValidacion::class,
+            static fn () => $calendario->mover(
+                (int) ($primeraDelSegundo['id'] ?? 0),
+                $tramos[1],
+                date('Y-m-d'),
+                '15:45',
+                $id,
+                $usuarioId
+            ),
+            'Mover a un par que el plan no reparte se rechaza'
+        );
+
+        comprobar(
+            strpos(implode(' ', array_values($sinPlanAlMover->errores())), 'no reparte') !== false,
+            'Y tambien con el mensaje del par que no esta en el plan',
+            'mensaje: ' . implode(' ', array_values($sinPlanAlMover->errores()))
+        );
+        comprobarIgual(
+            $antesDeMover + 1,
+            $cuantasHay($id),
+            'Ese rechazo tampoco deja asiento'
+        );
+
+        // =====================================================================
+        // 7. LA PANTALLA CUENTA LA HISTORIA EN PALABRAS
+        // =====================================================================
+        // La columna guarda el nombre corto de la accion porque asi se filtra, pero
+        // el historial se lee a ojo. Sin frase, buscar «retirada» entre las filas es
+        // pasar la hoja entera.
+        limpiarPeticion();
+        $html = htmlDeAccion('ControladorSeguimiento', 'panel', ['id' => $id]);
+
+        comprobarContiene($html, 'Que se hizo', 'El historial del panel tiene su columna de que se hizo');
+        comprobarContiene(
+            $html,
+            \App\Models\Auditoria::descripcionDe(\App\Models\Auditoria::ACCION_GENERACION),
+            'Y la generacion aparece traducida a una frase'
+        );
+        comprobarContiene(
+            $html,
+            \App\Models\Auditoria::descripcionDe(\App\Models\Auditoria::ACCION_RETIRADA),
+            'Y tambien la retirada'
+        );
+        comprobarNoContiene($html, 'Notice:', 'Y el panel se pinta sin avisos de PHP');
+    } catch (Throwable $error) {
+        foreach ([[$principal, 'borrarEscenarioDePanel'], [$ajena, 'borrarEscenarioDePanel']] as $par) {
+            if ($par[0] === null) {
+                continue;
+            }
+
+            try {
+                $par[1]((int) $par[0]['promocion']);
+            } catch (Throwable $ignorado) {
+                fwrite(STDERR, '[pruebas] No se ha podido limpiar: ' . $ignorado->getMessage() . PHP_EOL);
+            }
+        }
+
+        throw $error;
+    } finally {
+        $db->ejecutar('DELETE FROM usuarios WHERE nombre = ?', [$nombreUsuario]);
+        limpiarPeticion();
+    }
+}
+
+/**
  * Lista de casos disponibles, indexada por numero.
  *
  * @var array<int, callable():void>
@@ -6096,6 +6707,7 @@ const PRUEBAS = [
     19 => 'caso19',
     20 => 'caso20',
     21 => 'caso21',
+    22 => 'caso22',
 ];
 
 // -----------------------------------------------------------------------------

@@ -45,6 +45,7 @@
  * @see \App\Services\Adjudicador
  * @see \App\Services\CierrePromocion
  * @see \App\Services\Seguimiento
+ * @see \App\Services\Calendario
  * @see apartados 3 y 8 de la especificacion
  * @see decisiones D10 y D18
  */
@@ -85,6 +86,12 @@ class Auditoria extends Modelo
     /**
      * Accion de un cambio de configuracion, como los ajustes o el plan de premios.
      *
+     * Hoy la lleva el movimiento de una unidad del calendario, que es exactamente
+     * eso: una decision sobre cuando se reparte un premio, sin que el premio cambie.
+     * La constante lleva declarada desde el hito 1 sin que nada la usara, y una
+     * constante que promete una clase de cambio que no existe es una promesa que
+     * alguien va a cumplir sin saber que la cumple mal.
+     *
      * @var string
      */
     public const ACCION_CONFIGURACION = 'configuracion';
@@ -92,9 +99,37 @@ class Auditoria extends Modelo
     /**
      * Accion de la creacion de una entidad.
      *
+     * La lleva el alta de una unidad suelta en el calendario. Se distingue de
+     * ACCION_GENERACION a proposito: generar reparte cientos de unidades de golpe y
+     * anade una sola fila de auditoria con el recuento, mientras que el alta manual
+     * es una fila por unidad, porque es una fila por decision.
+     *
      * @var string
      */
     public const ACCION_ALTA = 'alta';
+
+    /**
+     * Accion de la retirada de una unidad del calendario.
+     *
+     * No es un alta ni una baja de la campana: la fila se queda, con su motivo, y
+     * lo unico que cambia es su estado. Es la accion que mas se consulta cuando el
+     * plan y el calendario no cuadran, porque «faltan tres» casi siempre significa
+     * tres retiradas, y por eso tiene nombre propio en vez de esconderse dentro de
+     * la configuracion.
+     *
+     * @var string
+     */
+    public const ACCION_RETIRADA = 'retirada';
+
+    /**
+     * Accion de la generacion del calendario entero a partir del plan.
+     *
+     * Una sola fila con el recuento, como la purga y por el mismo motivo: una
+     * campana con quinientas unidades tiene que dejar un asiento, no quinientos.
+     *
+     * @var string
+     */
+    public const ACCION_GENERACION = 'generacion';
 
     /**
      * Accion del vaciado de datos personales por retencion.
@@ -111,6 +146,41 @@ class Auditoria extends Modelo
      * @var string
      */
     public const ACCION_PURGA = 'purga';
+
+    /**
+     * Explica una accion de auditoria en una frase.
+     *
+     * La columna se guarda con un nombre corto porque asi se puede filtrar y
+     * agrupar con una consulta normal —que es lo que exigia la decision D18—, pero
+     * el historial se lee a ojo. Buscar «retirada» entre cuatrocientas filas de
+     * «adjudicacion» no es buscar, es pasar la hoja entera.
+     *
+     * Las acciones que no estan en la lista se devuelven tal cual, sin inventar una
+     * explicacion: la columna no tiene una restriccion que la limite a una lista
+     * cerrada, y una fila vieja con una accion que este codigo ya no conoce tiene
+     * que seguir leyendose, no becoming un hueco en blanco.
+     *
+     * @param string $accion Valor de la columna «accion».
+     *
+     * @return string Frase que explica la accion, o la propia accion si no se conoce.
+     */
+    public static function descripcionDe(string $accion): string
+    {
+        $descripciones = [
+            self::ACCION_VISUALIZACION => 'Ha mirado el panel de seguimiento.',
+            self::ACCION_CIERRE        => 'Ha cerrado la campana.',
+            self::ACCION_PURGA         => 'Ha vaciado los datos personales por retencion.',
+            self::ACCION_ALTA          => 'Ha anadido una unidad al calendario a mano.',
+            self::ACCION_CONFIGURACION => 'Ha movido una unidad del calendario.',
+            self::ACCION_RETIRADA      => 'Ha retirado una unidad del calendario.',
+            self::ACCION_GENERACION    => 'Ha generado el calendario a partir del plan.',
+            'adjudicacion'             => 'Se ha repartido un premio.',
+            'sin_premio'               => 'Una participacion se ha quedado sin premio.',
+            'simulacion'               => 'Ha simulado una participacion, sin repartir nada.',
+        ];
+
+        return $descripciones[$accion] ?? $accion;
+    }
 
     /**
      * Escribe una fila de auditoria.

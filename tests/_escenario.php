@@ -298,6 +298,45 @@ function instanteDeHoy(string $hora): string
 }
 
 /**
+ * Devuelve las horas de hoy que ya han pasado, de la más antigua a la más reciente.
+ *
+ * Existe por una bomba de relojería que estuvo dormida en la suite. El motor solo
+ * entrega una unidad cuyo `inicio` sea anterior o igual al instante de la
+ * participación, así que un caso que programa sus premios a las 10:00, 11:00, 12:00
+ * y 13:00 **solo pasa si se ejecuta a partir de las 13:00**. A las 09:33 las cuatro
+ * unidades están en el futuro, la participación sale «sin premio» y cinco
+ * comprobaciones fallan sin que haya cambiado ni una línea del código. Los casos
+ * que llaman al motor directamente no tienen ese problema porque le pasan el
+ * instante a mano con `instanteDeHoy()`; el 13 es el que va por la pantalla, y por
+ * eso usa el reloj de verdad y no se le puede pasar la hora.
+ *
+ * Por eso las horas no se escriben a mano: se sacan del reloj. Se piden cuatro
+ * unidades y se devuelven los cuatro últimos minutos que ya han pasado, de forma
+ * que siempre haya premio disponible. Entre medianoche y las 00:03 no hay cuatro
+ * minutos distintos, y no pasa nada: `primeraPendiente()` ordena por `inicio, id`,
+ * así que dos unidades del mismo minuto salen por su identificador y ninguna se
+ * pierde.
+ *
+ * @param int $cuantas Cuántas horas se quieren.
+ *
+ * @return array<int, string> Horas en formato «H:i:s», de la más antigua a la más
+ *                        reciente.
+ */
+function horasPasadasDeHoy(int $cuantas): array
+{
+    $ahora = new DateTimeImmutable(Aplicacion::ahora());
+    $minutos = ((int) $ahora->format('H')) * 60 + (int) $ahora->format('i');
+    $horas = [];
+
+    for ($faltan = $cuantas; $faltan > 0; $faltan--) {
+        $minuto = max(0, $minutos - $faltan + 1);
+        $horas[] = sprintf('%02d:%02d:00', intdiv($minuto, 60), $minuto % 60);
+    }
+
+    return $horas;
+}
+
+/**
  * Cuantos mensajes de correo hay ahora mismo en la cola de una campana.
  *
  * @param int $promocionId Campana que se quiere mirar.

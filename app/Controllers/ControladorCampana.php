@@ -36,6 +36,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Core\Autorizacion;
 use App\Core\Controlador;
 use App\Core\ErrorValidacion;
 use App\Core\NoEncontrado;
@@ -594,7 +595,8 @@ class ControladorCampana extends Controlador
                 $tramoId,
                 $premioId,
                 (string) $tramo['fecha'],
-                $hora
+                $hora,
+                Autorizacion::usuarioId()
             );
         } catch (ErrorValidacion $e) {
             $this->pintarCalendario(
@@ -636,7 +638,14 @@ class ControladorCampana extends Controlador
         $tramo = $this->exigirTramoDeLaCampana($tramoId, $id);
 
         try {
-            $this->calendario->mover($unidadId, $tramoId, (string) $tramo['fecha'], $hora, $id);
+            $this->calendario->mover(
+                $unidadId,
+                $tramoId,
+                (string) $tramo['fecha'],
+                $hora,
+                $id,
+                Autorizacion::usuarioId()
+            );
         } catch (ErrorValidacion $e) {
             $this->pintarCalendario(
                 $id,
@@ -666,8 +675,13 @@ class ControladorCampana extends Controlador
         $reemplazar = $this->recibidoCasilla('reemplazar');
         $permitirRepetir = $this->recibidoCasilla('permitir_repetir');
 
-        try {
-            $resultado = $this->calendario->generar($id, $reemplazar, $permitirRepetir);
+try {
+            $resultado = $this->calendario->generar(
+                $id,
+                $reemplazar,
+                $permitirRepetir,
+                Autorizacion::usuarioId()
+            );
         } catch (ErrorValidacion $e) {
             foreach ($e->errores() as $mensaje) {
                 Vista::guardarAviso((string) $mensaje, 'error');
@@ -700,11 +714,11 @@ class ControladorCampana extends Controlador
 
         $id = $this->parametroId('id', 'admin/promociones');
         $this->exigirCampana($id);
-        $unidadId = $this->parametroId('unidad', 'admin/promociones/' . $id . '/calendario');
-$motivo = (string) $this->recibido('motivo', '');
+$unidadId = $this->parametroId('unidad', 'admin/promociones/' . $id . '/calendario');
+        $motivo = (string) $this->recibido('motivo', '');
 
         try {
-            $this->calendario->retirar($unidadId, $id, $motivo);
+            $this->calendario->retirar($unidadId, $id, $motivo, Autorizacion::usuarioId());
         } catch (ErrorValidacion $e) {
             foreach ($e->errores() as $mensaje) {
                 Vista::guardarAviso((string) $mensaje, 'error');

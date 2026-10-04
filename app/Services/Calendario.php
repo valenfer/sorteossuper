@@ -83,12 +83,59 @@
  * vuelve a crear. La segunda nunca toca las entregadas, ni las anuladas, ni las no
  * entregadas, y el panel lo dice antes de pedir la confirmacion.
  *
+ * ============================================================================
+ * POR QUE UNA REVISION A MANO NO PUEDE PASARSE DEL PLAN
+ * ============================================================================
+ *
+ * El plan —las cantidades de asignaciones_tramo— es lo que el administrador ha
+ * pedido y el calendario son las filas con su minuto. Los dos se comparan en tres
+ * pantallas, y hace un tiempo que el desajuste era solo informativo: se avisaba y
+ * no pasaba nada. Eso dejaba abierta la direccion mala, que es la de SOBRAR.
+ *
+ * Faltar es legitimo y hasta desirable: retirar una unidad a mano es una decision
+ * del administrador, y el aviso de «faltan 2» sale precisamente cuando eso ha
+ * pasado. Sobrar no lo es nunca. Una unidad de mas no es un premio repartido, es un
+ * compromiso que el plan no contiene y que alguien tendra que cumplir en el
+ * mostrador, y no hay version de esa historia en la que pasarse del plan sea la
+ * respuesta correcta.
+ *
+ * Asi que el tope se comprueba al anadir y al mover, que son las dos formas de
+ * anadir. Retirar no lo comprueba, porque retirar es justamente lo que deja el
+ * hueco por el que esto se puede arreglar.
+ *
+ * El tope es por par de tramo y premio, no por campana: es la misma unidad de
+ * cuenta que usa AsignacionTramo::compararConCalendario(), y por eso una unidad
+ * anulada no cuenta. Sin esa excepcion, retirar una unidad y querer volver a
+ * preencher su hueco dejaria de ser posible, que es justo el orden en el que se
+ * arregla un calendario.
+ *
+ * ============================================================================
+ * POR QUE CADA REVISION DEJA UN ASIENTO
+ * ============================================================================
+ *
+ * Anadir, mover y retirar son las tres cosas que puede hacer una persona con el
+ * calendario de una campana en marcha, y las tres se hacian sin dejar rastro: la
+ * columna modificado_en decia cuando, no quien ni por que. El plan se puede tocar
+ * desde el panel, y sin dejar rastro tambien.
+ *
+ * El problema de verdad no es la falta de registro en si misma, es que ante un
+ * desajuste no hay forma de distinguir «se movio un minuto de mas por error» de
+ * «lo cambio alguien que no deberia poder tocarlo». Un plan y un calendario que no
+ * cuadran son una averia, y una averia sin historial no tiene causa.
+ *
+ * Por eso los cuatro caminos del calendario —anadir, mover, retirar y generar—
+ * escriben un asiento, cada uno con lo que estaba y lo que ha pasado a ser. Y
+ * por eso van con el cambio en la misma transaccion: un asiento sin cambio es una
+ * mentira, y un cambio sin asiento es lo que havia antes.
+ *
  * @see \App\Models\UnidadPremio
  * @see \App\Models\AsignacionTramo
+ * @see \App\Models\Auditoria
  * @see apartado 4.5 de la especificacion, generacion automatica del calendario
  * @see apartado 4.6 de la especificacion, revision y edicion del calendario
  * @see decision D2 del documento de especificacion
  * @see decision D9 del documento de especificacion
+ * @see decision D18 del documento de especificacion
  */
 
 declare(strict_types=1);
@@ -98,9 +145,11 @@ namespace App\Services;
 use App\Core\Aplicacion;
 use App\Core\ErrorValidacion;
 use App\Models\AsignacionTramo;
+use App\Models\Auditoria;
 use App\Models\Tramo;
 use App\Models\TipoPremio;
 use App\Models\UnidadPremio;
+use App\Models\User;
 
 /**
  * Generacion, revision y edicion del calendario de premios.
@@ -482,22 +531,28 @@ class Calendario
      * encontrar el tercero que no cabia dejaria los dos primeros ya generados, y
      * el administrador tendria un calendario a medias sin haber pulsado nada.
      *
-     * @param int  $promocionId     Campana cuyo calendario se genera.
-     * @param bool $reemplazar       Si es true, se borran antes las unidades
-     *                               «programadas» de los tramos afectados. Las
-     *                               entregadas, anuladas y no entregadas no se
-     *                               tocan nunca.
-     * @param bool $permitirRepetir Si es true, se admite el reparto con horas
-     *                               coincidentes, que es una de las tres salidas
-     *                               de D2.
+     * @param int       $promocionId     Campana cuyo calendario se genera.
+     * @param bool      $reemplazar       Si es true, se borran antes las unidades
+     *                                     «programadas» de los tramos afectados. Las
+     *                                     entregadas, anuladas y no entregadas no se
+     *                                     tocan nunca.
+     * @param bool      $permitirRepetir Si es true, se admite el reparto con horas
+     *                                     coincidentes, que es una de las tres salidas
+     *                                     de D2.
+     * @param int|null  $usuarioId       Usuario de la sesion, que queda en el asiento de
+     *                                   auditoria. Null en consola y en las pruebas.
      *
      * @return array<string, mixed> Informe con las claves «generado»,
      *         «unidades», «tramos», «omitidos», «repetidas» y «problemas».
      *
      * @throws \App\Core\ErrorBaseDeDatos Si la escritura falla.
      */
-    public function generar(int $promocionId, bool $reemplazar = false, bool $permitirRepetir = false): array
-    {
+    public function generar(
+        int $promocionId,
+        bool $reemplazar = false,
+        bool $permitirRepetir = false,
+        ?int $usuarioId = null
+    ): array {
         $plan = $this->planDe($promocionId);
         $problemas = $this->problemasDePlan($plan, $permitirRepetir);
 
@@ -511,8 +566,17 @@ class Calendario
         ];
 
         if ($problemas !== []) {
+            // No hay asiento cuando no se ha generado nada. Un asiento de «se ha
+            // generado el calendario» acompanado de un informe de cero unidades
+            // seria una forma de mentir en la fila que mas se lee.
             return $informe;
         }
+
+        // El recuento de antes se lee aqui y no despues, porque despues ya no se
+        // puede saber cuantas unidades habia: es la pregunta que responde este
+        // asiento («cuanto habia y cuanto hay»), y se pierde en cuanto se
+        // escribe.
+        $antes = $this->unidades->contarPorEstado($promocionId);
 
         $ahora = Aplicacion::ahora();
         $omitidos = 0;
@@ -539,11 +603,11 @@ class Calendario
             $tramos = new Tramo();
 
             foreach ($plan as $tramo) {
-            $cantidades = $tramo['cantidades'];
+                $cantidades = $tramo['cantidades'];
 
-            if ($cantidades === []) {
-                continue;
-            }
+                if ($cantidades === []) {
+                    continue;
+                }
 
                 $reparto = self::repartir(
                     $this->tiposDelPlan($tramo['cantidades']),
@@ -579,6 +643,26 @@ class Calendario
         $informe['tramos'] = $tramosConUnidades;
         $informe['omitidos'] = $omitidos;
         $informe['repetidas'] = $repetidas;
+
+        // El asiento va fuera de la transaccion del reparto, y a proposito: si
+        // llegara a fallar, el calendario ya esta escrito y perder el asiento por
+        // eso seria peor que perder el asiento por no haberlo escrito. Es al
+        // reves que en las unidades sueltas, donde las dos escrituras son de una
+        // fila y caben las dos en la misma transaccion sin problema.
+        $this->anotar(
+            $promocionId,
+            Auditoria::ACCION_GENERACION,
+            'calendario',
+            (string) $promocionId,
+            ['unidades' => array_sum($antes)],
+            [
+                'creadas'   => $generadas,
+                'tramos'    => $tramosConUnidades,
+                'omitidos'  => $omitidos,
+                'repetidas' => $repetidas,
+            ],
+            $usuarioId
+        );
 
         return $informe;
     }
@@ -756,13 +840,17 @@ class Calendario
      *
      * @param int    $promocionId   Campana a la que pertenece la unidad.
      * @param int    $tramoId       Tramo dentro del cual cae la unidad.
-     * @param int    $tipoPremioId  Premio que se reparte.
-     * @param string $fecha         Fecha del tramo, en formato «A-n-j».
-     * @param string $hora          Hora de inicio, en formato «H:i:s».
+     * @param int       $tipoPremioId  Premio que se reparte.
+     * @param string    $fecha         Fecha del tramo, en formato «A-n-j».
+     * @param string    $hora          Hora de inicio, en formato «H:i:s».
+     * @param int|null  $usuarioId     Usuario de la sesion, que queda en el asiento de
+     *                                  auditoria. Null en consola y en las pruebas.
      *
      * @return int Identificador de la unidad creada.
      *
-     * @throws \App\Core\ErrorValidacion Si los datos no son validos.
+     * @throws \App\Core\ErrorValidacion Si los datos no son validos, o si el par de
+     *                                   tramo y premio ya tiene todas las unidades
+     *                                   que pide el plan.
      * @throws \App\Core\ErrorBaseDeDatos Si la escritura falla.
      */
     public function crear(
@@ -770,7 +858,8 @@ class Calendario
         int $tramoId,
         int $tipoPremioId,
         string $fecha,
-        string $hora
+        string $hora,
+        ?int $usuarioId = null
     ): int {
         $errores = [];
 
@@ -794,13 +883,57 @@ class Calendario
             $errores['tipo_premio_id'] = 'El premio no pertenece a esta campaña.';
         } elseif ((int) $tipo['activo'] !== 1) {
             $errores['tipo_premio_id'] = 'El premio está desactivado y no admite unidades nuevas.';
+        } else {
+            // El tope del plan se comprueba solo cuando el par es valido. Si el
+            // premio no es de esta campana, decir «se pasa del plan» seria un
+            // segundo error sin sentido encima del primero, y quien lo ve podria
+            // intentar arreglar el plan de un premio que no existe aqui.
+            $cuentas = $this->cuentasDelPlan($tramoId, $tipoPremioId);
+
+            if ($cuentas['calendario'] >= $cuentas['plan']) {
+                $errores['tipo_premio_id'] = $this->mensajeDeExceso($cuentas, (string) $tipo['nombre']);
+            }
         }
 
         if ($errores !== []) {
             throw new ErrorValidacion('Revisa los datos de la unidad.', $errores);
         }
 
-        return $this->unidades->crear($promocionId, $tramoId, $tipoPremioId, $fecha . ' ' . $hora);
+        // La unidad y su asiento van en la misma transaccion. Escribirlos por
+        // separado permitiria las dos historias malas: un asiento que dice que se
+        // anadio una unidad que no esta, y una unidad anadida sin quien la anadio.
+        return Aplicacion::db()->enTransaccion(function () use (
+            $promocionId,
+            $tramoId,
+            $tipoPremioId,
+            $fecha,
+            $hora,
+            $usuarioId,
+            $cuentas
+        ): int {
+            $unidadId = $this->unidades->crear($promocionId, $tramoId, $tipoPremioId, $fecha . ' ' . $hora);
+
+            // El recuento del asiento se vuelve a hacer despues de insertar, y no
+            // se reutiliza el de antes: lo que queda anotado es lo que hay, no lo
+            // que habia cuando se comprobo que habia hueco.
+            $this->anotar(
+                $promocionId,
+                Auditoria::ACCION_ALTA,
+                'unidades_premio',
+                (string) $unidadId,
+                null,
+                [
+                    'tramo_id'       => $tramoId,
+                    'tipo_premio_id' => $tipoPremioId,
+                    'inicio'         => $fecha . ' ' . $hora,
+                    'plan'           => $cuentas['plan'],
+                    'calendario'     => $this->unidades->contarEnTramoYTipo($tramoId, $tipoPremioId),
+                ],
+                $usuarioId
+            );
+
+            return $unidadId;
+        });
     }
 
     /**
@@ -811,19 +944,28 @@ class Calendario
      * tres cosas diciendo cosas distintas: un correo que anuncia un premio a una
      * hora que ya no es la de la fila.
      *
-     * @param int    $unidadId   Unidad que se mueve.
-     * @param int    $tramoId    Tramo de destino.
-     * @param string $fecha      Fecha del tramo de destino.
-     * @param string $hora       Hora de inicio dentro del tramo de destino.
-     * @param int    $promocionId Campana a la que pertenece la unidad.
+     * @param int       $unidadId   Unidad que se mueve.
+     * @param int       $tramoId    Tramo de destino.
+     * @param string    $fecha      Fecha del tramo de destino.
+     * @param string    $hora       Hora de inicio dentro del tramo de destino.
+     * @param int       $promocionId Campana a la que pertenece la unidad.
+     * @param int|null  $usuarioId Usuario de la sesion, que queda en el asiento de
+     *                             auditoria. Null en consola y en las pruebas.
      *
      * @return void
      *
-     * @throws \App\Core\ErrorValidacion Si no se puede mover.
+     * @throws \App\Core\ErrorValidacion Si no se puede mover, o si el par de tramo
+     *                                   y premio de destino ya esta completo.
      * @throws \App\Core\ErrorBaseDeDatos Si la escritura falla.
      */
-    public function mover(int $unidadId, int $tramoId, string $fecha, string $hora, int $promocionId): void
-    {
+    public function mover(
+        int $unidadId,
+        int $tramoId,
+        string $fecha,
+        string $hora,
+        int $promocionId,
+        ?int $usuarioId = null
+    ): void {
         $unidad = $this->buscar($unidadId);
 
         if ($unidad === null || (int) $unidad['promocion_id'] !== $promocionId) {
@@ -842,18 +984,70 @@ class Calendario
         // unidad se queda donde estaba, y no a medio cambiar.
         $this->comprobarDestino($promocionId, $tramoId, $fecha, $hora);
 
-        $movidas = $this->unidades->mover($unidadId, $tramoId, $fecha . ' ' . $hora);
+        // Mover es tambien anadir, porque la unidad pasa a contar en el par de
+        // destino. El tope del plan se comprueba aqui con la unidad excluida de la
+        // cuenta, que es lo que hace que mover una unidad dentro de su mismo tramo
+        // no se rechace a si mismo cuando ese par ya esta completo.
+        $cuentas = $this->cuentasDelPlan($tramoId, (int) $unidad['tipo_premio_id'], $unidadId);
 
-        if ($movidas === 0) {
-            // Cero filas no es un fallo de la base de datos: significa que entre la
-            // lectura y este UPDATE otra pantalla ha entregado la unidad. Es el
-            // mismo caso que el motor de adjudicacion encuentra al entregar, y
-            // merece un mensaje propio en vez de un error generico.
+        if ($cuentas['calendario'] >= $cuentas['plan']) {
+            $tipo = (new TipoPremio())->buscarPorId((int) $unidad['tipo_premio_id']);
+
             throw new ErrorValidacion(
-                'La unidad ya no está programada y no se ha movido.',
-                ['estado' => 'Puede que se haya entregado o retirado mientras editas el calendario.']
+                'No cabe esa unidad en el tramo de destino segun el plan.',
+                ['tramo_id' => $this->mensajeDeExceso($cuentas, (string) ($tipo['nombre'] ?? 'ese premio'))]
             );
         }
+
+        $antes = [
+            'tramo_id' => (int) $unidad['tramo_id'],
+            'inicio'   => (string) $unidad['inicio'],
+        ];
+
+        $despues = [
+            'tramo_id'   => $tramoId,
+            'inicio'     => $fecha . ' ' . $hora,
+            'plan'       => $cuentas['plan'],
+            'calendario' => $cuentas['calendario'] + 1,
+        ];
+
+        // El movimiento y su asiento van juntos. Si el UPDATE no afecta a ninguna
+        // fila porque otra pantalla ha entregado la unidad entre la lectura y
+        // aqui, la excepcion sale dentro de la transaccion y el asiento tampoco se
+        // escribe: no se puede haber movido una unidad que ya no era programada.
+        Aplicacion::db()->enTransaccion(function () use (
+            $unidadId,
+            $tramoId,
+            $fecha,
+            $hora,
+            $promocionId,
+            $usuarioId,
+            $antes,
+            $despues
+        ): void {
+            $movidas = $this->unidades->mover($unidadId, $tramoId, $fecha . ' ' . $hora);
+
+            if ($movidas === 0) {
+                // Cero filas no es un fallo de la base de datos: significa que entre la
+                // lectura y este UPDATE otra pantalla ha entregado la unidad. Es el
+                // mismo caso que el motor de adjudicacion encuentra al entregar, y
+                // merece un mensaje propio en vez de un error generico.
+                throw new ErrorValidacion(
+                    'La unidad ya no está programada y no se ha movido.',
+                    ['estado' => 'Puede que se haya entregado o retirado mientras editas el calendario.']
+                );
+            }
+
+            $this->anotar(
+                $promocionId,
+                Auditoria::ACCION_CONFIGURACION,
+                'unidades_premio',
+                (string) $unidadId,
+                $antes,
+                $despues,
+                $usuarioId
+            );
+        });
     }
 
     /**
@@ -863,16 +1057,18 @@ class Calendario
      * sumando en el recuento de la campana. Retirar y borrar no son lo mismo, y
      * el boton del panel se llama «Retirar» para que nadie lo confunda.
      *
-     * @param int    $unidadId    Unidad que se retira.
-     * @param int    $promocionId Campana a la que pertenece la unidad.
-     * @param string $motivo      Motivo de la retirada, que se guarda en la fila.
+     * @param int       $unidadId    Unidad que se retira.
+     * @param int       $promocionId Campana a la que pertenece la unidad.
+     * @param string    $motivo      Motivo de la retirada, que se guarda en la fila.
+     * @param int|null  $usuarioId   Usuario de la sesion, que queda en el asiento de
+     *                                auditoria. Null en consola y en las pruebas.
      *
      * @return void
      *
      * @throws \App\Core\ErrorValidacion Si la unidad no se puede retirar.
      * @throws \App\Core\ErrorBaseDeDatos Si la escritura falla.
      */
-    public function retirar(int $unidadId, int $promocionId, string $motivo = ''): void
+    public function retirar(int $unidadId, int $promocionId, string $motivo = '', ?int $usuarioId = null): void
     {
         $unidad = $this->buscar($unidadId);
 
@@ -889,7 +1085,39 @@ class Calendario
             );
         }
 
-        $this->unidades->anular($unidadId, $motivo);
+        // El asiento se escribe tambien cuando la unidad ya estaba anulada, porque
+        // retirar es idempotente a proposito y quien pulsa el boton ha hecho algo.
+        // Un asiento que dice «ya estaba anulada» responde a la pregunta que se le
+        // hace a un historial, que es si alguien ha tocado esto.
+        Aplicacion::db()->enTransaccion(function () use (
+            $unidadId,
+            $promocionId,
+            $motivo,
+            $usuarioId,
+            $unidad,
+            $estado
+        ): void {
+            $this->unidades->anular($unidadId, $motivo);
+
+            $this->anotar(
+                $promocionId,
+                Auditoria::ACCION_RETIRADA,
+                'unidades_premio',
+                (string) $unidadId,
+                [
+                    'estado'         => $estado,
+                    'anulada_motivo' => $estado === UnidadPremio::ESTADO_ANULADA
+                        ? (string) ($unidad['anulada_motivo'] ?? '')
+                        : '',
+                    'inicio'         => (string) $unidad['inicio'],
+                ],
+                [
+                    'estado'         => UnidadPremio::ESTADO_ANULADA,
+                    'anulada_motivo' => $motivo,
+                ],
+                $usuarioId
+            );
+        });
     }
 
     /**
@@ -923,6 +1151,148 @@ class Calendario
         if ($errores !== []) {
             throw new ErrorValidacion('La hora no es valida para ese tramo.', $errores);
         }
+    }
+
+    /**
+     * Compara el calendario con el plan para un par de tramo y premio.
+     *
+     * Devuelve los dos numeros y no un si o un no, porque los dos se necesitan
+     * para dos cosas distintas: para decidir si cabe otra unidad, y para escribir
+     * en el asiento de auditoria cuanto queda de lo que se pidio. Un metodo que
+     * devolviese solo «cabe» obligaria a repetir las dos consultas.
+     *
+     * Las unidades anuladas no se cuentan, igual que en
+     * \App\Models\AsignacionTramo::compararConCalendario(). Es lo que permite
+     * rellenar el hueco que deja una retirada.
+     *
+     * @param int $tramoId         Tramo del par.
+     * @param int $tipoPremioId    Premio del par.
+     * @param int $excluirUnidadId Unidad que no se cuenta, o cero para contarlas
+     *                             todas. La usa mover() para no contar la unidad
+     *                             que se esta moviendo.
+     *
+     * @return array{plan: int, calendario: int} Lo que pide el plan y lo que hay.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    private function cuentasDelPlan(int $tramoId, int $tipoPremioId, int $excluirUnidadId = 0): array
+    {
+        $cantidades = (new AsignacionTramo())->cantidadesPorTramo($tramoId);
+
+        return [
+            'plan'       => (int) ($cantidades[$tipoPremioId] ?? 0),
+            'calendario' => $this->unidades->contarEnTramoYTipo($tramoId, $tipoPremioId, $excluirUnidadId),
+        ];
+    }
+
+    /**
+     * Explica por que no cabe una unidad mas en ese par de tramo y premio.
+     *
+     * El mensaje lleva los numeros porque «no cabe» no es accionable: lo que el
+     * administrador puede hacer es subir la cantidad del tramo, retirar una unidad, o
+     * entender que ese premio no se reparte ahi. Sin las cifras, quien lo lee tiene
+     * que volver a la pantalla de cantidades a buscarlas.
+     *
+     * Los dos casos se distinguen porque son dos errores distintos. El primero es
+     * «este par no esta en el plan», que se arregla escribiendo la cantidad; el
+     * segundo es «esta lleno», que se arregla subiendo la cantidad o retirando
+     * algo. Decir solo «se pasa del plan» dejaria al primero sin explicacion.
+     *
+     * @param array{plan: int, calendario: int} $cuentas      Lo que pide el plan y
+     *                                                       lo que hay.
+     * @param string                            $nombrePremio Nombre del premio, que
+     *                                                       es lo que el
+     *                                                       administrador tiene
+     *                                                       delante en la
+     *                                                       pantalla.
+     *
+     * @return string Mensaje para el campo del formulario.
+     */
+    private function mensajeDeExceso(array $cuentas, string $nombrePremio): string
+    {
+        if ($cuentas['plan'] === 0) {
+            return sprintf(
+                'El plan de este tramo no reparte «%s». Anadelo a las cantidades del tramo si quieres que salga.',
+                $nombrePremio
+            );
+        }
+
+        return sprintf(
+            'El plan de este tramo ya esta completo: pide %d de «%s» y hay %d. Sube la cantidad en el'
+                . ' tramo, retira alguna unidad, o deja de mover unidades aqui.',
+            $cuentas['plan'],
+            $nombrePremio,
+            $cuentas['calendario']
+        );
+    }
+
+    /**
+     * Escribe el asiento de una revision del calendario.
+     *
+     * Vive en el servicio y no en el controlador por la misma razon que el cierre
+     * y la purga lo escriben los suyos: el que cambia el calendario tiene que
+     * dejar el asiento en el mismo sitio, y un llamante nuevo que se olvide de
+     * hacerlo es un fallo silencioso. Ademas, aqui se puede meter en la misma
+     * transaccion que el cambio, que desde un controlador no.
+     *
+     * El nombre del usuario se copia en el momento del cambio, igual que en
+     * \App\Services\CierrePromocion, porque el esquema guarda esa copia para que la
+     * fila siga diciendo quien fue aunque la cuenta se borre.
+     *
+     * @param int                  $promocionId Campana a la que pertenece el cambio.
+     * @param string               $accion      Accion de \App\Models\Auditoria.
+     * @param string               $entidad     Tabla o pantalla afectada.
+     * @param string               $entidadId   Identificador de la fila afectada.
+     * @param array<string, mixed>|null $antes   Como estaba antes, o null si no
+     *                                              existia.
+     * @param array<string, mixed>|null $despues Como queda despues.
+     * @param int|null             $usuarioId   Usuario de la sesion, o null.
+     *
+     * @return void
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la insercion falla.
+     */
+    private function anotar(
+        int $promocionId,
+        string $accion,
+        string $entidad,
+        string $entidadId,
+        ?array $antes,
+        ?array $despues,
+        ?int $usuarioId
+    ): void {
+        (new Auditoria())->registrar(
+            $promocionId,
+            $usuarioId,
+            (new User())->nombreDe($usuarioId),
+            $entidad,
+            $entidadId,
+            $accion,
+            $antes,
+            $despues,
+            null,
+            null,
+            $this->ipDeLaPeticion()
+        );
+    }
+
+    /**
+     * Devuelve la direccion IP de la peticion, o la cadena vacia en consola.
+     *
+     * La columna ip es NOT NULL, asi que en las pruebas y en los scripts de linea
+     * de comandos se escribe la cadena vacia en lugar de null. Se copia el mismo
+     * criterio de \App\Services\Adjudicador::ipDeLaPeticion(), que es la primera
+     * vez que hizo falta.
+     *
+     * @return string Direccion IP, o cadena vacia.
+     */
+    private function ipDeLaPeticion(): string
+    {
+        if (!Aplicacion::esPeticionWeb() || !isset($_SERVER['REMOTE_ADDR'])) {
+            return '';
+        }
+
+        return substr((string) $_SERVER['REMOTE_ADDR'], 0, 45);
     }
 
     /**

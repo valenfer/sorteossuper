@@ -455,16 +455,19 @@ $recortadoAdjudicadas = $listado['total_adjudicadas'] > Seguimiento::LIMITE_ADJU
                         <th>Cuando</th>
                         <th>Quien</th>
                         <th>Accion</th>
+                        <th>Que se hizo</th>
                         <th>Filtro</th>
                         <th>Filas</th>
                     </tr>
                 </thead>
                 <tbody>
                 <?php foreach ($auditoria['historial'] as $linea): ?>
+                    <?php $queSeHizo = Auditoria::descripcionDe((string) $linea['accion']); ?>
                     <tr>
                         <td><?= Vista::e((string) $linea['creado_en']) ?></td>
                         <td><?= Vista::e((string) $linea['usuario_nombre']) ?></td>
                         <td><?= Vista::e((string) $linea['accion']) ?></td>
+                        <td><?= Vista::e($queSeHizo) ?></td>
                         <td><?= Vista::e((string) ($linea['filtros'] ?? '')) ?></td>
                         <td>
                             <?= $linea['filas_mostradas'] === null
@@ -478,9 +481,12 @@ $recortadoAdjudicadas = $listado['total_adjudicadas'] > Seguimiento::LIMITE_ADJU
         </div>
 
         <p class="ayuda">
-            Las anotaciones de tipo <?= Vista::e(Auditoria::ACCION_VISUALIZACION) ?>
-            son las consultas de esta pantalla, y las de tipo
-            <?= Vista::e(Auditoria::ACCION_CIERRE) ?> son los cierres de campana.
+            La columna «Que se hizo» traduce el nombre corto de la accion, porque el
+            historial se lee a ojo y buscar «retirada» entre cuatrocientas filas de
+            «adjudicacion» es trabajo de nadie. Las anotaciones de tipo
+            <?= Vista::e(Auditoria::ACCION_VISUALIZACION) ?> son las consultas de
+            esta pantalla, y las de tipo <?= Vista::e(Auditoria::ACCION_CIERRE) ?>
+            son los cierres de campana.
         </p>
     <?php endif; ?>
 </section>

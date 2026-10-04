@@ -325,6 +325,47 @@ class UnidadPremio extends Modelo
     }
 
     /**
+     * Cuenta las unidades de un par de tramo y premio, para compararlas con el plan.
+     *
+     * ============================================================================
+     * POR QUE LAS ANULADAS NO CUENTAN
+     * ============================================================================
+     *
+     * Porque la cuenta tiene que ser comparable con la de
+     * \App\Models\AsignacionTramo::compararConCalendario(), que excluye las
+     * anuladas por el mismo motivo, y porque es lo que espera quien retira una
+     * unidad a mano: si ha retirado una de las tres que pedia el plan, ese par pasa
+     * a tener hueco y hay que poder volver a rellenarlo. Contar tambien las
+     * anuladas cerraria esa puerta para siempre y dejaria un hueco que no se puede
+     * llenar desde el panel.
+     *
+     * La unidad que se esta moviendo se puede excluir, y hace falta: al mover una
+     * unidad dentro de su mismo tramo, la cuenta sin excluirla diria que ese par ya
+     * esta lleno y rechazaria un movimiento que no anade nada.
+     *
+     * @param int $tramoId         Tramo del par.
+     * @param int $tipoPremioId    Premio del par.
+     * @param int $excluirUnidadId Unidad que no se cuenta, o cero para contarlas
+     *                             todas.
+     *
+     * @return int Numero de unidades que siguen vivas en ese par.
+     *
+     * @throws ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function contarEnTramoYTipo(int $tramoId, int $tipoPremioId, int $excluirUnidadId = 0): int
+    {
+        return (int) $this->db->valor(
+            'SELECT COUNT(*)
+               FROM unidades_premio
+              WHERE tramo_id = ?
+                AND tipo_premio_id = ?
+                AND estado <> ?
+                AND id <> ?',
+            [$tramoId, $tipoPremioId, self::ESTADO_ANULADA, $excluirUnidadId]
+        );
+    }
+
+    /**
      * Genera un codigo de reclamacion unico para una unidad.
      *
      * Es lo que recibe la clienta en el correo y lo que la azafata le entrega,

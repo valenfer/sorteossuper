@@ -54,7 +54,7 @@ Lo que se espera ahora mismo, exactamente:
 | Comprobación | Resultado esperado |
 | --- | --- |
 | `verificar_docs.php` | `Todo correcto: 75 ficheros, sin problemas` |
-| `tests\run.php` | `Todo correcto: 22 casos ejecutados, 587 comprobaciones` |
+| `tests\run.php` | `Todo correcto: 23 casos ejecutados, 643 comprobaciones` |
 | `instalar.php --diagnostico` | `Diagnostico terminado`, sin ninguna escritura |
 | `instalar.php` | Idempotente: se puede repetir sin romper nada |
 | `enviar_correos.php` | Enviados 0, fallidos 0 con la cola vacía, sin error |
@@ -114,9 +114,17 @@ le cambia la hora o el tramo y se retira, todo por POST con token y con confirma
 y la tabla avisa de en cuanto el calendario se separa del plan. Ver el registro de
 hitos, al final.
 
+**Hecho (hito 11).** El calendario no se pasa del plan y cada revisión deja asiento.
+Las dos decisiones de producto que quedaban abiertas están cerradas: añadir o mover
+una unidad a un par de tramo y premio que ya tiene todas las del plan se rechaza, y
+las cuatro revisiones del calendario —añadir, mover, retirar y generar— escriben una
+fila en `auditoria` con quién las hizo y con lo que había antes. Ver el registro de
+hitos, al final.
+
 **Lo que no hay todavía.** Nada de los nueve casos de aceptación del apartado 10
-está pendiente: el 2 se cerró en el hito 10. Lo que queda por delante son decisiones
-de producto del promotor, no tareas técnicas. Ver el registro de hitos, al final.
+está pendiente: el 2 se cerró en el hito 10. Las dos decisiones de producto que
+quedaban abiertas se han cerrado en el hito 11, así que no hay ninguna tarea técnica
+pendiente ni ninguna decisión abierta. Ver el registro de hitos, al final.
 
 **En la raíz hay un `bbdd.png` con un diagrama de la base de datos hecho a
 mano.** Se versiona desde el hito 3, con la autorización del promotor, porque es
@@ -131,22 +139,27 @@ Este es el resumen para retomar el trabajo. Si solo se lee una cosa de todo el
 documento, que sea esto.
 
 **Punto exacto en el que está.** Los hitos 0 a 10 están cerrados y subidos a
-`origin/master`, y las decisiones D4, D6 y D19 están confirmadas. No hay nada a
-medias: el árbol de trabajo está limpio y las tres comprobaciones pasan. El commit de
+`origin/master`, y las decisiones D4, D6 y D19 están confirmadas. El hito 11 está
+escrito y probado, y lo que falta es su commit: el árbol de trabajo tiene los cambios
+del hito 11 sin subir. El commit de
 D19 es `c6e91c4`, el de D4 es `dbf2fdf`, el del hito 7 es `51fec02`, el del hito 8,
 que es D6, es `cb9b714`, el del hito 9 es `311b23d` y el del hito 10 es `cf29f14`.
 `master` está sincronizado con `origin/master`.
 
 **Lo siguiente, por este orden.**
 
-1. **Nada pendiente del hito 10.** Las tres revisiones del calendario —añadir, mover
-   y retirar— están conectadas de punta a punta y el caso 21 las prueba. La suite son
-   22 casos y 587 comprobaciones, y las tres comprobaciones de la sección 2 pasan.
-2. **Los nueve casos de aceptación tienen su camino completo.** No queda ninguna tarea
-   técnica derivada del apartado 10. Lo que siga es una decisión del promotor, y lo
-   más probable es que sea de producto: qué pasa con las unidades que sobran cuando el
-   plan y el calendario discrepan, y si la revisión manual debería tener su propio
-   historial de auditoría.
+1. **Commit del hito 11.** Las tres comprobaciones de la sección 2 pasan y el árbol
+   solo tiene los cambios de este hito. Va todo en un commit, con este párrafo
+   dentro, y en el mensaje hay que decir que se cierra la pregunta de las unidades
+   que sobran y la del historial de la revisión manual.
+2. **Nada pendiente después de eso.** El calendario no se pasa del plan al añadir ni
+   al mover, y las cuatro revisiones —añadir, mover, retirar y generar— dejan asiento.
+   El caso 22 lo prueba y el caso 21 se ha reescrito para el contrato nuevo. La suite
+   son 23 casos y 643 comprobaciones.
+3. **Los nueve casos de aceptación tienen su camino completo**, y no queda ninguna
+   decisión de producto abierta: las dos que quedaban se han cerrado en el hito 11.
+   Lo único que puede pedir trabajo a partir de aquí es el promotor, y no hay ninguna
+   pregunta esperando respuesta.
 
 **Antes de escribir código nuevo, cinco avisos.**
 
@@ -498,6 +511,13 @@ Cosas que ya han costado tiempo y que conviene no volver a cruzar.
   función `peticionWeb()` lo pone, pero el caso abre los sockets a mano para no leer
   la respuesta antes de tiempo, y ahí hay que escribir `$servidor['prefijo']` a
   mano. Sin él, Apache devuelve 404 y parece un fallo de rutas de la aplicación.
+- **`ipDeLaPeticion()` está copiada en cuatro servicios.** `Adjudicador`,
+  `CierrePromocion`, `Seguimiento` y `Calendario` tienen el mismo método privado de
+  seis líneas, y el del hito 11 es el cuarto. No es un descuido de este hito: es el
+  patrón que ya había, y tocar los otros tres dentro del hito 11 habría sido
+  revisar código que funcionaba. Si algún día se unifica, el sitio es un estático en
+  `Aplicacion`, y el motivo de que viva en el servicio y no en `Core` es que cada
+  uno escribe en una tabla distinta con su propia firma de `registrar()`.
 
 ## 9. Entorno
 
@@ -1209,3 +1229,106 @@ caso 21 lo cazó a la primera, y por eso está aquí.
 
 **Cómo se comprueba.** El caso 21 son 41 comprobaciones. La suite son 22 casos y 587
 comprobaciones.
+
+### Hito 11 — El calendario no se pasa del plan y cada revisión deja asiento
+
+**Lo que había debajo.** Quedaban dos decisiones de producto sin cerrar, y las dos
+eran del mismo sitio: el calendario se podía revisar a mano —añadir, mover y retirar— y
+esa revisión no tenía ni regla ni rastro. El aviso de «el calendario se ha separado
+del plan» existía desde el hito 10, pero era informativo, y eso dejaba abierta la
+dirección mala: **sobrar**. Faltar es legítimo, porque retirar una unidad a mano es una
+decisión del administrador y el aviso sale precisamente cuando eso ha pasado; sobrar
+no lo es nunca, porque una unidad de más no es un premio repartido, es un compromiso
+que el plan no contiene y que alguien tendrá que cumplir en el mostrador. Y por otro
+lado, las tres revisiones se hacían sin escribir nada en `auditoria`: la columna
+`modificado_en` decía cuándo, no quién. Un plan y un calendario que no cuadran son una
+avería, y una avería sin historial no tiene causa.
+
+**Lo que se ha decidido.**
+
+- El tope se comprueba al **añadir y al mover**, que son las dos formas de añadir. No
+  al retirar, porque retirar es justamente lo que deja el hueco por el que esto se
+  arregla. Es **por par de tramo y premio**, la misma unidad de cuenta que usa
+  `AsignacionTramo::compararConCalendario()`, y contando solo las unidades no anuladas.
+- Un par que el plan no reparte —sin fila en `asignaciones_tramo`, o con cantidad `0`—
+  no admite unidades, porque si no el otro camino de pasarse del plan sería borrar la
+  cantidad por debajo del calendario.
+- Las cuatro revisiones —**añadir, mover, retirar y generar**— dejan un asiento cada
+  una. Generar deja **uno solo** con el recuento, como la purga y el cierre, y no uno
+  por unidad.
+
+**Lo que se ha escrito.**
+
+- `UnidadPremio::contarEnTramoYTipo()`, que cuenta las unidades vivas de un par y
+  admite excluir una. La exclusión es lo que permite que mover una unidad dentro de su
+  propio tramo funcione con el par lleno: sin ella, cambiar una unidad de las 12:10 a
+  las 12:15 se rechazaría porque el par ya tiene dos de dos, cuando no ha añadido nada.
+- En `Calendario`: `cuentasDelPlan()`, `mensajeDeExceso()`, `anotar()` e
+  `ipDeLaPeticion()`, el tope en `crear()` y en `mover()`, y los cuatro asientos.
+- `Auditoria::ACCION_RETIRADA` y `Auditoria::ACCION_GENERACION`. `ACCION_ALTA` y
+  `ACCION_CONFIGURACION` ya existían desde el hito 1 sin que nada las usara, y eso es lo
+  que estaba mal: una constante que promete una clase de cambio que no existe es una
+  promesa que alguien va a cumplir sin saber que la cumple mal.
+- `Auditoria::descripcionDe()` y una columna «Que se hizo» en el historial del panel. La
+  columna guarda el nombre corto porque así se puede filtrar y agrupar, que es lo que
+  exigía D18, pero el historial se lee a ojo: buscar «retirada» entre cuatrocientas
+  filas de «adjudicacion» no es buscar, es pasar la hoja entera. Una acción que el
+  código ya no conoce se devuelve tal cual, sin inventarle una explicación.
+- `ControladorCampana` pasa `Autorizacion::usuarioId()` a las cuatro acciones.
+
+**Los detalles que hay que tener presentes.**
+
+- La unidad y su asiento van en la **misma transacción**, y por eso el movimiento que
+  el motor no puede hacer —`UPDATE` de cero filas porque otra pantalla entregó la
+  unidad entre la lectura y el `UPDATE`— lanza dentro de la transacción y **no** deja
+  asiento. No se puede haber movido una unidad que ya no era programada.
+- El asiento de **generar va fuera** de la transacción del reparto, y a propósito: si
+  llegara a fallar, el calendario ya está escrito y perder el asiento por eso sería
+  peor que perder el asiento por no haberlo escrito.
+- **Generar sin problema no escribe** nada: un asiento de «se ha generado el
+  calendario» acompañado de un informe de cero unidades sería una forma de mentir en la
+  fila que más se lee. Generar y que se salte todos los tramos por tener unidades
+  **sí** escribe, con `creadas: 0`, porque alguien ha pulsado algo.
+- `retirar()` sobre una unidad ya anulada **también escribe asiento**. Retirar es
+  idempotente a propósito —la pantalla no ofrece el botón, pero el servicio no puede
+  depender de eso— y un asiento que dice «ya estaba anulada» responde a la pregunta que
+  se le hace a un historial, que es si alguien ha tocado esto.
+- Los números `plan` y `calendario` del asiento de un alta se **cuentan después** de
+  insertar, no se reutilizan de la comprobación: lo que queda anotado es lo que hay, no
+  lo que había cuando se comprobó que había hueco.
+
+**El caso 21 ha tenido que reescribirse.** Añadía una novena unidad a un escenario
+generado, que es exactamente lo que este hito prohíbe, así que las comprobaciones
+tenían sentido con el contrato viejo. Ahora **retira una unidad primero**, comprueba
+que se rechaza la unidad de más, que el hueco hace que la pantalla avise «Faltan 1», y
+que al rellenar el hueco el aviso desaparece: el desajuste que se avisa es el que
+existe, no el que se ha arreglado. La parte de mover pasa a moverse **dentro del mismo
+tramo**, que es el movimiento que tiene que seguir funcionando con el par lleno.
+
+**Lo que comprueba el caso 22 (46 comprobaciones).** Que generar ocho unidades deja un
+asiento y no ocho, con el nombre y el identificador del usuario copiados en el momento
+del cambio; que un plan que no cabe no genera ni deja asiento; que añadir a un par
+completo se rechaza con los dos números en el mensaje y no crea nada; que un par que el
+plan no reparte se rechaza con otro mensaje; que retirar abre el hueco, que añadir lo
+rellena y que los dos dejan un asiento cada uno; que mover dentro del par funciona y
+mover a un par lleno no; y que la pantalla cuenta la historia en palabras.
+
+**Avisos para quien siga.**
+
+- `capturarFalla()` es `comprobarFalla()` con una cosa más: **devuelve la excepción**.
+  Hace falta cuando lo que se comprueba no es que la operación falle, sino **qué dice**
+  el fallo. «No cabe en el plan» y «el tramo no existe» fallan los dos, y un mensaje
+  equivocado en el campo equivocado es un fallo que `comprobarFalla()` declara bueno.
+- Para provocar el «par que el plan no reparte» el caso 22 **borra la fila de
+  `asignaciones_tramo`** por debajo del calendario, que es como se queda un par cuando
+  se toca el plan desde la pantalla de cantidades. Para provocar el «plan que no cabe»
+  sube la cantidad a 800 en un tramo de 720 minutos. Los dos son `UPDATE`/`DELETE`
+  directos a propósito, igual que el `UPDATE tipos_premio SET activo = 0` del caso 21.
+- `listarPorCampana()` **no trae `usuario_id`**, solo `usuario_nombre`. Para comprobar
+  que la fila apunta a un usuario de verdad y no al cero que devuelve
+  `Autorizacion::usuarioId()` sin sesión, hay que ir a la tabla.
+- `caso13()` no hace `echo 'Caso 13: ...'` y por eso el resumen de la suite imprime un
+  caso sin título. Es del hito 13, no de este, y no se ha tocado.
+
+**Cómo se comprueba.** El caso 22 son 46 comprobaciones y el 21 son 51. La suite son
+23 casos y 643 comprobaciones.

@@ -2796,6 +2796,8 @@ function caso12(): void
  */
 function caso13(): void
 {
+    echo 'Caso 13: la pantalla de participacion, de punta a punta por HTTP', PHP_EOL;
+
     // Cuatro premios y ningun correo activado: con el correo apagado el codigo de
     // reclamacion tiene que verse en pantalla, porque es la unica via que le
     // queda a la persona de recoger el premio. Ese es el estado de partida.

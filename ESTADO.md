@@ -561,6 +561,10 @@ para que no haga falta releer el código.
 | 5. Correo | `550eaa8` | Cerrado |
 | 6. Panel de seguimiento | `53f90be` | Cerrado |
 | 7. Purga de datos | `51fec02` | Cerrado, el worker del correo venía del hito 5 |
+| 8. Concurrencia por HTTP de verdad | `cb9b714` | Cerrado, es la confirmación de D6 |
+| 9. Imágenes | `311b23d` | Cerrado |
+| 10. Revisión manual del calendario | `cf29f14` | Cerrado, cierra el caso de aceptación 2 |
+| 11. Tope del plan y auditoría de la revisión | `bdb193d` | Cerrado, cierra las dos decisiones de producto que quedaban |
 
 ### Hito 0 — Especificación (`fcf6770`)
 

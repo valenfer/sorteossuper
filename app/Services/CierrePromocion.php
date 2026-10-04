@@ -176,7 +176,7 @@ class CierrePromocion
                     ],
                     null,
                     null,
-                    $this->ipDeLaPeticion()
+                    Aplicacion::ipDeLaPeticion()
                 );
 
                 return [
@@ -253,23 +253,5 @@ class CierrePromocion
     private function nombreUsuario(?int $usuarioId): string
     {
         return (new \App\Models\User())->nombreDe($usuarioId);
-    }
-
-    /**
-     * Devuelve la direccion IP de la peticion, o la cadena vacia en consola.
-     *
-     * La columna ip es NOT NULL, asi que en los scripts de linea de comandos y en
-     * las pruebas se escribe la cadena vacia en lugar de null. Se copia el mismo
-     * criterio de \App\Services\Adjudicador::ipDeLaPeticion().
-     *
-     * @return string Direccion IP, o cadena vacia.
-     */
-    private function ipDeLaPeticion(): string
-    {
-        if (!Aplicacion::esPeticionWeb() || !isset($_SERVER['REMOTE_ADDR'])) {
-            return '';
-        }
-
-        return substr((string) $_SERVER['REMOTE_ADDR'], 0, 45);
     }
 }

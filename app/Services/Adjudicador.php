@@ -731,7 +731,7 @@ class Adjudicador
                 $entidad,
                 $entidadId,
                 $accion,
-                $this->ipDeLaPeticion(),
+                Aplicacion::ipDeLaPeticion(),
                 Aplicacion::ahora(),
             ]
         );
@@ -859,24 +859,6 @@ class Adjudicador
                 'El identificador del intento no tiene un formato valido. Vuelva a abrir la pantalla.'
             );
         }
-    }
-
-    /**
-     * Devuelve la direccion IP de la peticion en curso, o cadena vacia.
-     *
-     * La auditoria guarda la IP de quien hizo el cambio, y en consola no hay
-     * ninguna: los scripts de linea de comandos escriben con la IP vacia, que es
-     * mas honesto que inventar «127.0.0.1» o «local».
-     *
-     * @return string Direccion IP, o cadena vacia.
-     */
-    private function ipDeLaPeticion(): string
-    {
-        if (!Aplicacion::esPeticionWeb() || !isset($_SERVER['REMOTE_ADDR'])) {
-            return '';
-        }
-
-        return substr((string) $_SERVER['REMOTE_ADDR'], 0, 45);
     }
 
     /**

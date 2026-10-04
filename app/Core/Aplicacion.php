@@ -701,6 +701,34 @@ class Aplicacion
     }
 
     /**
+     * Devuelve la direccion IP de la peticion en curso, o la cadena vacia en
+     * consola.
+     *
+     * Vive aqui y no en un servicio porque la necesitan cuatro —la adjudicacion, el
+     * cierre, el seguimiento y el calendario— y cada uno tenia su copia de seis
+     * lineas que se diferenciaba en nada. Cuando hay cuatro copias, un dia se
+     * arregla una y se tocan tres, y el fallo sale como «a veces no sale la IP».
+     *
+     * La cadena vacia y no un «127.0.0.1» inventado: los scripts de linea de
+     * comandos y las pruebas escriben con la IP vacia porque en consola no hay
+     * peticion de la que sacarla, y las cuatro columnas son NOT NULL.
+     *
+     * El recorte a 45 caracteres es el de la columna. Una IP nunca llega a eso, y
+     * un valor que no cabe en su columna es un error de base de datos que aparece
+     * en la auditoria, que es el sitio peor posible para descubrirlo.
+     *
+     * @return string Direccion IP, o cadena vacia.
+     */
+    public static function ipDeLaPeticion(): string
+    {
+        if (!self::esPeticionWeb() || !isset($_SERVER['REMOTE_ADDR'])) {
+            return '';
+        }
+
+        return substr((string) $_SERVER['REMOTE_ADDR'], 0, 45);
+    }
+
+    /**
      * Abre la sesion con los parametros de seguridad del apartado 3 de la
      * especificacion.
      *

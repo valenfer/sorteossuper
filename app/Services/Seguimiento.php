@@ -54,7 +54,6 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Core\Aplicacion;
-use App\Core\Autorizacion;
 use App\Models\Auditoria;
 use App\Models\Correo;
 use App\Models\IntentoRechazado;
@@ -342,10 +341,16 @@ class Seguimiento
         int $filasMostradas,
         ?int $usuarioId = null
     ): int {
+        // El nombre se copia por identificador y no con
+        // Autorizacion::nombreUsuario(), que es lo que hacen el cierre, la purga y
+        // el calendario. La razon es que los dos no pueden discrepar: el metodo
+        // recibe el usuario que sea, y si el nombre se leyera de la sesion, una
+        // llamada con un identificador y la sesion de otra persona escribiria el
+        // nombre equivocado al lado del identificador correcto.
         return (new Auditoria())->registrar(
             $promocionId,
             $usuarioId,
-            Autorizacion::nombreUsuario(),
+            (new \App\Models\User())->nombreDe($usuarioId),
             'seguimiento',
             (string) $promocionId,
             Auditoria::ACCION_VISUALIZACION,
@@ -353,7 +358,7 @@ class Seguimiento
             null,
             $this->describirFiltros($filtros),
             $filasMostradas,
-            $this->ipDeLaPeticion()
+            Aplicacion::ipDeLaPeticion()
         );
     }
 
@@ -431,23 +436,5 @@ class Seguimiento
         }
 
         return $partes === [] ? 'sin filtro' : implode(', ', $partes);
-    }
-
-    /**
-     * Devuelve la direccion IP de la peticion, o la cadena vacia en consola.
-     *
-     * Se copia el criterio de \App\Services\Adjudicador::ipDeLaPeticion(), con la
-     * misma justificacion: la columna es NOT NULL, y en las pruebas y en los
-     * scripts de linea de comandos no hay peticion de la que sacarla.
-     *
-     * @return string Direccion IP, o cadena vacia.
-     */
-    private function ipDeLaPeticion(): string
-    {
-        if (!Aplicacion::esPeticionWeb() || !isset($_SERVER['REMOTE_ADDR'])) {
-            return '';
-        }
-
-        return substr((string) $_SERVER['REMOTE_ADDR'], 0, 45);
     }
 }

@@ -1783,6 +1783,248 @@ function caso10(): void
         'Y el tramo con unidades sigue en la tabla'
     );
 
+    // =====================================================================
+    // UN TRAMO AL QUE YA NO SE REPARTE NADA SE PUEDE BORRAR
+    // =====================================================================
+    //
+    // El fallo que se ha corregido aqui. borrarSiEstaLibre() contaba CUALQUIER
+    // unidad, y una unidad anulada no es una unidad que estorbe: esta muerta y no
+    // cuenta en ninguna cifra del panel. Con el filtro de antes, un tramo cuyas
+    // unidades estaban todas retiradas no se podia borrar nunca, y el aviso de
+    // error lo empujaba justo a ese callejon: decia «retira esas unidades
+    // primero», quien lo leia las retiraba una a una desde el calendario, y al
+    // volver a pulsar «Borrar el tramo» seguian ahi, ahora anuladas, y el tramo
+    // seguia sin borrarse. Retirar no borra la fila, asi que no habia salida: la
+    // unica era crear otro tramo y dejar el viejo para siempre. Es lo que paso en
+    // la campana 1 del hito 12 y se ve entero en la tabla de auditoria.
+    //
+    // Va en su propia campana porque borra tramos, y dejar este escenario sin su
+    // unico tramo rompia todo lo que viene despues.
+    $borrables = crearEscenarioDePanel(['premios' => 1, 'tramos' => 3, 'sufijo' => 'borrar']);
+$campanaBorrables = (int) $borrables['promocion'];
+$fechaBorrable = (string) (new \App\Models\Tramo())
+        ->exigirPorId((int) $borrables['tramos'][0], '', $campanaBorrables)['fecha'];
+
+    // Las unidades se generan por el servicio, como las genera el panel, para que
+    // la prueba mida el contrato de borrarSiEstaLibre() y no una fila inventada.
+    (new \App\Services\Calendario())->generar($campanaBorrables);
+
+    $modeloTramos = new \App\Models\Tramo();
+    $vivas = (int) $borrables['tramos'][0];
+    $anuladas = (int) $borrables['tramos'][1];
+    $mixtas = (int) $borrables['tramos'][2];
+
+    comprobar(
+        (int) $db->valor('SELECT COUNT(*) FROM unidades_premio WHERE tramo_id = ?', [$vivas]) > 0,
+        'El escenario de borrado tiene unidades programadas de partida'
+    );
+
+    // ---- Un tramo con unidades programadas sigue sin poder borrarse --------
+    comprobarIgual(
+        0,
+        $modeloTramos->borrarSiEstaLibre($vivas),
+        'Un tramo con unidades programadas NO se puede borrar'
+    );
+
+    comprobarIgual(
+        ['unidades' => 2, 'retirables' => 2, 'participaciones' => 0],
+        $modeloTramos->obstaculosParaBorrar($vivas),
+        'Y el panel puede decir cuantas unidades lo estorban, sin contar las anuladas'
+    );
+
+    // ---- Si se retiran todas, el tramo se borra -----------------------------
+    //
+    // Se retiran por el servicio y no por el modelo a proposito: es el camino que
+    // recorre el boton «Retirar» del calendario, y ademas es el que escribe el
+    // asiento de auditoria. Ese asiento es justo lo que hace que borrar el tramo
+    // no borre la decision de retirar el premio, y hay que comprobarlo con el
+    // camino real porque con el modelo solo no habria asiento que mirar.
+    $calendario = new \App\Services\Calendario();
+
+    foreach ($db->todos('SELECT id FROM unidades_premio WHERE tramo_id = ?', [$anuladas]) as $fila) {
+        $calendario->retirar((int) $fila['id'], $campanaBorrables, 'Prueba: retirada a mano');
+    }
+
+    comprobarIgual(
+        2,
+        (int) $db->valor(
+            'SELECT COUNT(*) FROM unidades_premio WHERE tramo_id = ? AND estado = ?',
+            [$anuladas, \App\Models\UnidadPremio::ESTADO_ANULADA]
+        ),
+        'Las dos unidades del tramo «anuladas» estan anuladas, y las filas NO se han borrado al retirarlas'
+    );
+
+    comprobarIgual(
+        ['unidades' => 0, 'retirables' => 0, 'participaciones' => 0],
+        $modeloTramos->obstaculosParaBorrar($anuladas),
+        'Y el panel ya no ve ningun obstaculo en ese tramo, porque las unidades anuladas no cuentan'
+    );
+
+    comprobarIgual(
+        1,
+        $modeloTramos->borrarSiEstaLibre($anuladas),
+        'Un tramo con TODAS sus unidades anuladas SI se puede borrar: es el caso que estaba bloqueado'
+    );
+
+    comprobarIgual(
+        0,
+        (int) $db->valor('SELECT COUNT(*) FROM tramos WHERE id = ?', [$anuladas]),
+        'Y el tramo ya no esta en la tabla'
+    );
+
+    // Las unidades anuladas se van con el, por la cascada de fk_unidades_tramo. Lo
+    // que no puede perderse es la decision de retirarlas, y no se pierde porque
+    // vive en auditoria, que no cuelga de tramos.
+    comprobarIgual(
+        0,
+        (int) $db->valor('SELECT COUNT(*) FROM unidades_premio WHERE tramo_id = ?', [$anuladas]),
+        'Las unidades anuladas se han ido con su tramo, por la cascada del esquema'
+    );
+
+    $asientosDeRetirada = (int) $db->valor(
+        'SELECT COUNT(*) FROM auditoria
+          WHERE promocion_id = ? AND entidad = ? AND accion = ?',
+        [$campanaBorrables, 'unidades_premio', \App\Models\Auditoria::ACCION_RETIRADA]
+    );
+
+    comprobarIgual(
+        2,
+        $asientosDeRetirada,
+        'Y los dos asientos de retirada siguen en auditoria DESPUES de borrar el tramo: la decision no se pierde'
+    );
+
+    // ---- Una mezcla de anuladas y vivas tampoco se borra --------------------
+    $mitad = $db->todos('SELECT id FROM unidades_premio WHERE tramo_id = ?', [$mixtas]);
+    (new \App\Models\UnidadPremio())->anular((int) $mitad[0]['id'], 'Prueba: retirada a mano');
+
+    comprobarIgual(
+        1,
+        (int) $db->valor(
+            'SELECT COUNT(*) FROM unidades_premio WHERE tramo_id = ? AND estado <> ?',
+            [$mixtas, \App\Models\UnidadPremio::ESTADO_ANULADA]
+        ),
+        'El tramo «mixta» se queda con una unidad programada y otra anulada'
+    );
+
+    comprobarIgual(
+        0,
+        $modeloTramos->borrarSiEstaLibre($mixtas),
+        'Un tramo con una sola unidad programada NO se borra aunque las demas esten anuladas'
+    );
+
+    comprobarIgual(
+        1,
+        (int) $db->valor('SELECT COUNT(*) FROM tramos WHERE id = ?', [$mixtas]),
+        'Y el tramo mixto sigue en la tabla, entero'
+    );
+
+    // ---- Una unidad ya entregada tampoco se puede retirar para poder borrar -
+    //
+    // El aviso de error decia «retira esas unidades primero» tambien cuando lo
+    // que habia eran unidades entregadas, y eso no es un consejo: el boton de
+    // «Retirar» del calendario solo toca las programadas. Por eso el mensaje
+    // nuevo ya no lo promete.
+    $entregada = $mixtas;
+    $unidad = $db->uno(
+        'SELECT id FROM unidades_premio WHERE tramo_id = ? AND estado = ?',
+        [$entregada, \App\Models\UnidadPremio::ESTADO_PROGRAMADA]
+    );
+
+    $participacionEntregada = $db->insertar(
+        'INSERT INTO participaciones (
+             promocion_id, tramo_id, clave_idempotencia, momento, resultado, datos, es_simulacion, creado_en
+         ) VALUES (?, ?, ?, ?, ?, ?, 0, ?)',
+        [
+            $campanaBorrables,
+            $entregada,
+            claveDePrueba('caso10-entregada'),
+            $fechaBorrable . ' 10:12:00',
+            \App\Models\Participacion::RESULTADO_PREMIO,
+            '{"dni":"12345678Z"}',
+            $fechaBorrable . ' 10:12:00',
+        ]
+    );
+
+    (new \App\Models\UnidadPremio())->entregar(
+        (int) $unidad['id'],
+        $participacionEntregada,
+        $fechaBorrable . ' 10:12:00',
+        (new \App\Models\UnidadPremio())->generarCodigoReclamacion()
+    );
+
+    comprobarIgual(
+        ['unidades' => 1, 'retirables' => 0, 'participaciones' => 1],
+        $modeloTramos->obstaculosParaBorrar($entregada),
+        'Con una unidad entregada y una participacion, el panel cuenta las dos cosas'
+    );
+
+    comprobarIgual(
+        0,
+        $modeloTramos->borrarSiEstaLibre($entregada),
+        'Un tramo con una unidad entregada NO se puede borrar'
+    );
+
+    // «retirables» a cero es lo que impide prometer «retira esas unidades»: el
+    // boton de «Retirar» del calendario solo toca las programadas, y aquí no queda
+    // ninguna.
+    comprobarIgual(
+        0,
+        (int) ($modeloTramos->obstaculosParaBorrar($entregada)['retirables'] ?? -1),
+        'Y el panel no cuenta ninguna unidad retirable, porque las que hay ya estan entregadas'
+    );
+
+    comprobarIgual(
+        0,
+        $modeloTramos->borrarSiEstaLibre($vivas),
+        'El tramo con unidades programadas del principio del caso sigue sin borrarse'
+    );
+
+    // ---- Y el aviso que se ve de verdad -------------------------------------
+    //
+    // Los tres motivos se comprueban por el camino que recorre el boton, no
+    // llamando al metodo privado: lo que importa es lo que lee el administrador
+    // encima del calendario. El fallo original era justo un mensaje, asi que un
+    // test que solo mirara el 0 que devuelve el DELETE dejaria pasar el otro mitad
+    // del fallo.
+    $borrarTramo = static function (int $tramo) use ($campanaBorrables): string {
+        limpiarPeticion();
+        enviarFormulario([], '/admin/promociones/' . $campanaBorrables . '/tramos/' . $tramo . '/borrar');
+        htmlDeAccion('ControladorCampana', 'borrarTramo', [
+            'id' => $campanaBorrables,
+            'tramo' => $tramo,
+        ]);
+
+        return \App\Core\Vista::aviso('error');
+    };
+
+    comprobar(
+        str_contains($borrarTramo($vivas), '2 unidades de premio'),
+        'Con unidades programadas, el aviso dice cuantas unidades estorban'
+    );
+
+    comprobar(
+        str_contains($borrarTramo($vivas), 'Retira esas unidades'),
+        'Y ofrece la salida que si funciona: retirarlas del calendario'
+    );
+
+    // Con una unidad entregada y una participacion no puede ofrecer esa salida,
+    // porque no hay ninguna unidad que el boton de «Retirar» pueda tocar.
+    comprobarNoContiene(
+        $borrarTramo($entregada),
+        'Retira esas unidades',
+        'Con una unidad ya entregada, el aviso NO promete retirar unidades que no se pueden retirar'
+    );
+
+    comprobar(
+        str_contains($borrarTramo($entregada), 'entregada'),
+        'Y dice en cambio que las unidades entregadas no se pueden retirar'
+    );
+
+    comprobar(
+        str_contains($borrarTramo($entregada), 'participacion registrada'),
+        'Y nombra tambien las participaciones, que tambien lo bloquean'
+    );
+
     // ---- La fila vacia del formulario se ignora, y no bloquea el guardado --
     // Esto se probo de verdad, mandando el POST, porque el fallo era justo del
     // navegador: la fila de abajo llevaba required en la etiqueta, asi que
@@ -5378,7 +5620,87 @@ function caso20(): void
             'Y config/config.php sigue en su sitio, que es lo que de verdad importa'
         );
 
-        // ---- 1.9. La extension sale del contenido, no del nombre -------------
+        // ---- 1.9. La URL de una subida cuelga de uploads/, no de assets/ -----
+        //
+        // Este es el fallo que hacia que las imagenes de la campana no se vieran
+        // NUNCA, y ninguna de las comprobaciones anteriores lo cazaba. Las vistas
+        // llamaban a Aplicacion::asset(), que antepone SIEMPRE la carpeta assets/,
+        // de modo que la URL que salia era «/sorteos/assets/uploads/12/img_x.jpg»:
+        // una carpeta que no existe en el proyecto. La imagen se guardaba en el
+        // sitio correcto, no habia ningun error de PHP ni nada en el log, y el
+        // unico sintoma era un <img> roto en el navegador con un 404 en la
+        // consola de red.
+        //
+        // Lo que hacia falta no era buscar la cadena «uploads/» dentro del HTML,
+        // que aparece igual en la URL buena y en la mala, sino mirar donde cuelga
+        // la URL. Eso es lo que se mira aqui.
+        comprobarIgual(
+            '/uploads/' . $ruta,
+            \App\Core\Aplicacion::subida($ruta),
+            'La URL de una imagen guardada cuelga de uploads/, en la raiz del proyecto'
+        );
+
+        comprobar(
+            !str_contains(\App\Core\Aplicacion::subida($ruta), '/assets/'),
+            'Y no de assets/, que es la carpeta del CSS y del JavaScript, donde no hay ninguna imagen'
+        );
+
+        comprobar(
+            !str_contains(\App\Core\Aplicacion::subida($ruta), '?v='),
+            'Y sin la huella «?v=» del contenido, que es de los assets: las imagenes de la campana no se cachean'
+        );
+
+        // La comprobacion de que la URL no se sale de la carpeta de subidas. Una
+        // ruta con «..» no puede llegar aqui desde la base de datos, porque
+        // Imagenes la rechaza al guardarla, pero el metodo no se apoya en eso:
+        // cualquier cosa que llegue a pintar una vista pasa por aqui.
+        foreach (['../config/config.php', '..\\config\\config.php', '/assets/x.png', ''] as $rutaMala) {
+            comprobarIgual(
+                '',
+                \App\Core\Aplicacion::subida($rutaMala),
+                'subida() no monta ninguna URL para la ruta «' . $rutaMala . '», que se sale de la carpeta'
+            );
+        }
+
+        // ---- 1.10. La foto de un premio se ve en el panel ---------------------
+        //
+        // La pantalla por la que se empezó a notar el fallo. Se paints aqui con un
+        // premio de verdad, con su foto, y se mira el atributo src entero.
+        (new \App\Models\TipoPremio())->guardar(
+            [
+                'nombre'       => 'Microondas con foto',
+                'descripcion'  => '',
+                'imagen_ruta'  => $ruta,
+                'activo'       => true,
+            ],
+            $campanaId
+        );
+
+        $htmlPanelPremios = \App\Core\Vista::renderizar('admin/premios/listado', [
+            'titulo'  => 'Premios de prueba',
+            'campana' => (new \App\Models\Promocion())->exigirPorId($campanaId),
+            'premios' => (new \App\Models\TipoPremio())->listarPorPromocion($campanaId),
+        ]);
+
+        $srcsPanel = atributosSrcDeImagenes($htmlPanelPremios);
+
+        comprobar(
+            in_array(\App\Core\Aplicacion::subida($ruta), $srcsPanel, true),
+            'La pantalla de premios del panel pinta la foto del premio desde su ruta real: '
+                . \App\Core\Aplicacion::subida($ruta),
+            'Los src que salen son: ' . implode(' | ', $srcsPanel)
+        );
+
+        comprobar(
+            !in_array(true, array_map(
+                static fn (string $src): bool => str_contains($src, '/assets/uploads/'),
+                $srcsPanel
+            ), true),
+            'Y no desde /assets/uploads/, que era exactamente lo que hacia que la foto no saliera',
+            'Los src que salen son: ' . implode(' | ', $srcsPanel)
+        );
+
+        // ---- 1.11. La extension sale del contenido, no del nombre ------------
         //
         // Se guarda un PNG con nombre .jpg. Si el nombre mandara, se guardaria
         // como .jpg y con extension .jpg seria un fichero que no es lo que dice.
@@ -5499,6 +5821,27 @@ function caso20(): void
             'Y lo hace con una etiqueta img de verdad, no con el texto de la ruta'
         );
 
+        // Y lo que de verdad importa: que el src apunte a la carpeta uploads/ y no
+        // a assets/. Comparar con el atributo entero y no con una cadena suelta es
+        // lo que distingue una URL de la otra.
+        $urlEsperada = \App\Core\Aplicacion::subida($rutaConNombreFalso);
+        $srcsResultado = atributosSrcDeImagenes($htmlResultado);
+
+        comprobar(
+            in_array($urlEsperada, $srcsResultado, true),
+            'Y el src de esa imagen es la ruta real de la subida: ' . $urlEsperada,
+            'Los src que salen son: ' . implode(' | ', $srcsResultado)
+        );
+
+        comprobar(
+            !in_array(true, array_map(
+                static fn (string $src): bool => str_contains($src, '/assets/uploads/'),
+                $srcsResultado
+            ), true),
+            'Y ninguna imagen cuelga de /assets/uploads/, que es la carpeta que no existe y hacia que no salieran',
+            'Los src que salen son: ' . implode(' | ', $srcsResultado)
+        );
+
         $htmlSinPremio = resultadoDePantallaEnCrudo($campanaId, false);
 
         comprobarNoContiene(
@@ -5541,6 +5884,27 @@ function caso20(): void
                 'Cartel de la promocion',
                 'Y con su texto alternativo, que es lo que lee el lector de pantalla'
             );
+
+            // Los dos banners de la pantalla, mas la imagen de resultado si la hay.
+            // Todos tienen que colgar de uploads/, que es donde los guarda el
+            // servicio, y ninguno de assets/, que es la carpeta del CSS.
+            $urlBanner = \App\Core\Aplicacion::subida($rutaConNombreFalso);
+            $srcs = atributosSrcDeImagenes($htmlDePantalla);
+
+            comprobar(
+                in_array($urlBanner, $srcs, true),
+                'Y su src es la ruta real de la subida, no una construida a mano en la pantalla de '
+                    . $nombreDePantalla,
+                'Los src que salen son: ' . implode(' | ', $srcs)
+            );
+
+            comprobar(
+                !in_array(true, array_map(
+                    static fn (string $src): bool => str_contains($src, '/assets/uploads/'),
+                    $srcs
+                ), true),
+                'Y ninguna imagen de la pantalla de ' . $nombreDePantalla . ' cuelga de /assets/uploads/'
+            );
         }
 
         comprobarNoContiene(
@@ -5581,6 +5945,31 @@ function escribirImagenDePrueba(string $ruta): string
     file_put_contents($ruta, $png === false ? '' : $png);
 
     return $ruta;
+}
+
+/**
+ * Devuelve los valores de todos los atributos src de las imagenes de un HTML.
+ *
+ * Existe por el fallo de las URLs de uploads/. Las comprobaciones de antes
+ * buscaban la cadena «uploads/» dentro del HTML renduido, y eso no distingue
+ * nada: «/sorteos/assets/uploads/12/img_x.png» contiene «uploads/12/img_x.png»
+ * igual que la URL buena. Lo que hay que mirar es el atributo src entero, y para
+ * eso hace falta sacarlos de la etiqueta en vez de buscar una cadena suelta.
+ *
+ * @param string $html HTML ya renderizado.
+ *
+ * @return array<int, string> Los valores de los src, en el orden en que salen.
+ */
+function atributosSrcDeImagenes(string $html): array
+{
+    if (preg_match_all('#<img\b[^>]*\bsrc="([^"]*)"#i', $html, $coincidencias) !== 1 && $coincidencias[1] === []) {
+        return [];
+    }
+
+    return array_map(
+        static fn (string $src): string => html_entity_decode($src, ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+        $coincidencias[1]
+    );
 }
 
 /**

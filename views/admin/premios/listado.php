@@ -118,9 +118,10 @@ $error = static fn (string $campo): string => (string) ($errores[$campo] ?? '');
                 <?php foreach ($premios as $premio): ?>
                     <tr>
                         <td>
-                            <?php if ((string) ($premio['imagen_ruta'] ?? '') !== ''): ?>
+                            <?php $imagenPremio = (string) ($premio['imagen_ruta'] ?? ''); ?>
+                            <?php if ($imagenPremio !== ''): ?>
                                 <img class="miniatura" alt=""
-                                     src="<?= Vista::e(Aplicacion::asset('uploads/' . (string) $premio['imagen_ruta'])) ?>">
+                                     src="<?= Vista::e(Aplicacion::subida($imagenPremio)) ?>">
                             <?php endif; ?>
                             <?= Vista::e((string) $premio['nombre']) ?>
                         </td>

@@ -262,8 +262,12 @@ foreach ($cambiosHora as $cambio) {
 
         <p class="ayuda">
             Borrar el tramo se lleva por delante sus cantidades y las unidades del
-            calendario que tenia asignadas. Si ya se ha entregado algo, el sistema
-            no deja borrarlo.
+            calendario que tenia asignadas. En cambio no se borra si le queda alguna
+            unidad viva o alguna participacion registrada, y entonces el sistema dice
+            cual de las dos cosas es y no hace nada. Las unidades ya retiradas no
+            estorban —se van con el tramo—, asi que un tramo al que ya no se reparte
+            nada si se puede quitar. Las unidades que quedan programadas todavia se
+            pueden retirar una a una desde el calendario del premio.
         </p>
     </section>
 <?php endforeach; ?>

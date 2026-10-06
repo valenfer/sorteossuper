@@ -54,7 +54,7 @@ Lo que se espera ahora mismo, exactamente:
 | Comprobación | Resultado esperado |
 | --- | --- |
 | `verificar_docs.php` | `Todo correcto: 75 ficheros, sin problemas` |
-| `tests\run.php` | `Todo correcto: 23 casos ejecutados, 643 comprobaciones` |
+| `tests\run.php` | `Todo correcto: 23 casos ejecutados, 681 comprobaciones` |
 | `instalar.php --diagnostico` | `Diagnostico terminado`, sin ninguna escritura |
 | `instalar.php` | Idempotente: se puede repetir sin romper nada |
 | `enviar_correos.php` | Enviados 0, fallidos 0 con la cola vacía, sin error |
@@ -138,28 +138,34 @@ que romper».
 Este es el resumen para retomar el trabajo. Si solo se lee una cosa de todo el
 documento, que sea esto.
 
-**Punto exacto en el que está.** Los hitos 0 a 11 están cerrados, y las decisiones D4,
-D6 y D19 están confirmadas. No hay nada a medias: el árbol de trabajo está limpio y las
-tres comprobaciones pasan. El commit de
+**Punto exacto en el que está.** Los hitos 0 a 11 están cerrados, las decisiones D4,
+D6 y D19 están confirmadas, y los once hitos más `ddd9537` están subidos a
+`origin/master`. A eso se suman dos correcciones de fallos reales, sin hito porque no
+lo son: la de las imágenes subidas y la del borrado de tramos. El commit de
 D19 es `c6e91c4`, el de D4 es `dbf2fdf`, el del hito 7 es `51fec02`, el del hito 8,
 que es D6, es `cb9b714`, el del hito 9 es `311b23d`, el del hito 10 es `cf29f14` y el
-del hito 11 es `bdb193d`. Lo único que queda por hacer es subir `master` a
-`origin/master`.
+del hito 11 es `bdb193d`.
 
 **Lo siguiente, por este orden.**
 
-1. **Subir `master` a `origin/master`.** El hito 11 es el commit `bdb193d` y todavía no
-   está subido. Los once hitos caben en un `git push` normal.
+1. **Subir este commit a `origin/master`.** Es lo único que queda.
 2. **Nada pendiente después de eso.** El calendario no se pasa del plan al añadir ni
    al mover, y las cuatro revisiones —añadir, mover, retirar y generar— dejan asiento.
-   El caso 22 lo prueba y el caso 21 se ha reescrito para el contrato nuevo. La suite
-   son 23 casos y 643 comprobaciones.
+   El caso 22 lo prueba y el caso 21 se ha reescrito para el contrato nuevo. Las
+   imágenes subidas se sirven con `Aplicacion::subida()` y un tramo sin unidades
+   vivas se puede borrar. La suite son 23 casos y 681 comprobaciones.
 3. **Los nueve casos de aceptación tienen su camino completo**, y no queda ninguna
    decisión de producto abierta: las dos que quedaban se han cerrado en el hito 11.
    Lo único que puede pedir trabajo a partir de aquí es el promotor, y no hay ninguna
    pregunta esperando respuesta.
 
-**Antes de escribir código nuevo, cinco avisos.**
+**La base de datos real está vacía, a propósito.** Se borraron todas las promociones,
+tramos, premios, unidades, participaciones y asientos de auditoría para empezar de
+cero, junto con las tres imágenes que había en `uploads/1/`. Las dos cuentas de
+usuario se conservaron, porque sin ellas no se puede entrar a crear nada. Quedan las
+15 tablas y las migraciones aplicadas, así que hace falta crear campañas, no migrar.
+
+**Antes de escribir código nuevo, diez avisos.**
 
 - La purga vacía correos en estado «pendiente» si alguien la llama mal, y eso
   significa que el worker manda un correo en blanco con el código de reclamación
@@ -179,6 +185,16 @@ del hito 11 es `bdb193d`. Lo único que queda por hacer es subir `master` a
   protege esa carpeta es su propio `.htaccess`, y su barrera principal es un
   `SetHandler none` que hay que escribir de verdad: estaba descrito en el comentario
   del fichero y no existía.
+- **Las imágenes de la campaña se sirven con `Aplicacion::subida()`, nunca con
+  `Aplicacion::asset()`.** Son seis puntos en tres vistas: los premios del panel, y
+  la imagen del resultado y los dos banners de las pantallas de participación. Los
+  seis lo hacen con ese método. `asset()` antepone **siempre** la carpeta `assets/`,
+  donde están el CSS y el JavaScript, así que llamarla con `'uploads/...'` construía
+  `/sorteos/assets/uploads/...`: una carpeta que no existe. **Las imágenes se
+  guardaban bien y no se veían nunca**, sin error de PHP, sin nada en el log y sin que
+  ninguna prueba lo notara, porque las pruebas buscaban la cadena `uploads/` dentro
+  del HTML y esa cadena aparece igual en la URL buena y en la mala. Para comprobar
+  una URL hay que mirar el atributo `src` entero, no una cadena suelta.
 - **El tramo y el hora viajan por POST, pero el servicio los recibe por argumento.**
   En las rutas antiguas —tramos, cantidades, borrar tramo— el identificador va en la
   URL (`/tramos/{tramo}/borrar`) y por eso se lee con `parametroId()`. En el
@@ -187,6 +203,42 @@ del hito 11 es `bdb193d`. Lo único que queda por hacer es subir `master` a
   navegador**, y no se ve en la consola: `parametroId()` lee los parámetros de la ruta,
   que ahí no existen, y lanza un 404 antes de mirar el POST. El caso 21 es el que lo
   cazó.
+- **Un tramo con todas sus unidades anuladas ya se puede borrar, y antes no.** El
+  fallo era un callejón sin salida: `Tramo::borrarSiEstaLibre()` contaba cualquier
+  unidad, y una unidad anulada no estorba —está muerta y no cuenta en ninguna cifra
+  del panel—. El aviso de error decía «retira esas unidades primero», así que quien
+  lo leía las retiraba una a una desde el calendario y, al volver a pulsar «Borrar el
+  tramo», el tramo seguía sin borrarse porque las unidades seguían ahí, ahora
+  anuladas. Retirar no borra la fila, así que no había salida: la única era crear otro
+  tramo. Se ve entero en `auditoria` de la campaña 1, con ocho retiradas a mano y
+  después un tramo nuevo. **Los tres motivos que puede dar el bloqueo van en
+  `obstaculosParaBorrar()`, y solo se promete «retira esas unidades» cuando
+  `retirables` iguala a `unidades`**: una unidad entregada no se puede retirar y era
+  otro mensaje que mandaba a un sitio donde el botón no hace nada. Y ojo al caso en
+  que hay unidades **y** participaciones: no es «o una cosa o la otra», y con la
+  primera versión del mensaje no salía ninguna de las dos advertencias. Retirar las
+  unidades tampoco desbloquea, así que se dice expresamente que el tramo seguirá sin
+  poder borrarse por la participación. Y las unidades que quedan las cuenta como lo
+  que son, unidades de premio: llamarlas «sin adjudicar» sería mentira, porque una
+  unidad entregada sí está adjudicada.
+- **El asiento de auditoría de una retirada lo escribe `Calendario::retirar()`, no
+  `UnidadPremio::anular()`.** Son dos puertas distintas al mismo estado, y por la
+  corta no hay asiento: una prueba que llame al modelo para «retirar unidades» no
+  tiene nada que comprobar cuando dice que la decisión de retirarlas sobrevive al
+  borrado del tramo. Hay que tirar por el servicio, que es además el camino que
+  recorre el botón.
+- **En SQL parametrizado, el orden de los parámetros es el orden de los
+  interrogantes**, no el que parece más lógico al leer la consulta. Pasó al
+  escribir `obstaculosParaBorrar()`, que encadena subconsultas: se pasó el estado
+  antes que el tramo porque parecía más limpio agruparlos por tipo, y MariaDB
+  devolvió `Invalid parameter number`. El síntoma —cifras a cero sin error de sintaxis—
+  se lee como un problema de lógica, no de parámetros.
+- **Probar que algo se puede hacer no es probar que se avisa bien.** Aquí el fallo
+  eran las dos mitades: el `DELETE` se negaba sin razón y el mensaje, además,
+  prometía una salida que no llevaba a ninguna parte. Comprobar el `0` que devuelve
+  el modelo deja pasar la mitad del texto, así que el caso 10 tira del POST de
+  verdad y lee el aviso con `Vista::aviso('error')`, que es lo que ve el
+  administrador.
 - Las secciones «Reglas que no hay que romper» y «Trampas conocidas» de este
   documento son las que más tiempo ahorran. La primera la hace cumplir el
   verificador; la segunda no, y por eso está aquí.
@@ -1333,4 +1385,4 @@ mover a un par lleno no; y que la pantalla cuenta la historia en palabras.
   caso sin título. Es del hito 13, no de este, y no se ha tocado.
 
 **Cómo se comprueba.** El caso 22 son 46 comprobaciones y el 21 son 51. La suite son
-23 casos y 643 comprobaciones.
+23 casos y 681 comprobaciones.

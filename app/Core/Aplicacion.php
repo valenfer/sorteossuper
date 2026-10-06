@@ -623,6 +623,61 @@ class Aplicacion
     }
 
     /**
+     * Monta la URL de una imagen que ha subido el administrador.
+     *
+     * ============================================================================
+     * POR QUE ESTO NO ES asset()
+     * ============================================================================
+     *
+     * Las imagenes de la campana NO viven en la carpeta assets: viven en
+     * uploads/, en la raiz del proyecto, porque no son ficheros del proyecto sino
+     * contenido que sube una persona y lo que hay ahi lo borra el .gitignore de
+     * uploads/ (apartado 4.9). asset() antepone SIEMPRE la carpeta de assets a lo
+     * que se le pasa, de modo que llamarla con «uploads/...» construia
+     * «/sorteos/assets/uploads/...», una carpeta que no existe.
+     *
+     * El fallo era particularmente malo porque no se veia en ningun sitio del
+     * servidor: no hay error de PHP, no hay aviso en el log y la subida funciona,
+     * porque la imagen se guarda en el sitio correcto. Solo se ve en el navegador,
+     * como un <img> roto con un 404 en la consola de red. Y las pruebas lo dejaron
+     * pasar, porque buscaban la cadena «uploads/» dentro del HTML y esa cadena
+     * aparece igual en la URL buena y en la mala. El caso 20 lo comprueba
+     * ahora contra la URL completa y contra la carpeta de destino.
+     *
+     * Tampoco lleva la huella «?v=» del contenido que pone asset(), y no es una
+     * omision: cada subida recibe un nombre nuevo generado por el servidor, de
+     * modo que sustituir una imagen genera ya una URL distinta y no hay nada que
+     * invalidar a mano. Lo que dice el .htaccess de la raiz es lo mismo: los
+     * assets se cachean un ano, las imagenes de la campana no.
+     *
+     * @param string $ruta Ruta guardada en la base de datos, del tipo
+     *                      «12/img_ab12cd0123456789.jpg».
+     *
+     * @return string URL de la imagen, o la cadena vacia si no hay ruta o si la
+     *                ruta no es segura.
+     */
+    public static function subida(string $ruta): string
+    {
+        $ruta = trim($ruta);
+
+        // Lo que se descarta es lo mismo que descarta
+        // Imagenes::esRutaValida(), y tiene que ser lo mismo: dentro de un
+        // atributo src un «..», una barra inicial o una letra de unidad seguida de
+        // dos puntos permitirian pedirle al navegador otro fichero del servidor.
+        // Las dos comprobaciones tienen que caer juntas; si se cambia una, hay que
+        // cambiar la otra.
+        if ($ruta === '' || str_contains($ruta, '..') || str_contains($ruta, '\\') || str_contains($ruta, "\0")) {
+            return '';
+        }
+
+        if (str_starts_with($ruta, '/') || preg_match('#^[a-z]:#i', $ruta) === 1) {
+            return '';
+        }
+
+        return self::$urlBase . '/uploads/' . $ruta;
+    }
+
+    /**
      * Cambia el nombre de la base de datos para el resto de la peticion.
      *
      * ============================================================================

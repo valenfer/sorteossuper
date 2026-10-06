@@ -514,7 +514,12 @@ class ControladorCampana extends Controlador
     }
 
     /**
-     * Borra un tramo que todavia no tiene unidades de premio.
+     * Borra un tramo que se ha quedado sin nada vivo colgando.
+     *
+     * Que no quede ninguna unidad viva es lo que hace falta, y «viva» aqui quiere
+     * decir que su estado no es «anulada». Las anuladas se van con su tramo por la
+     * cascada del esquema, asi que no estorban: contarlas hacia que el borrado se
+     * negase era justo el fallo que se ha corregido. Ver Tramo::borrarSiEstaLibre().
      *
      * @return void
      */
@@ -530,27 +535,112 @@ class ControladorCampana extends Controlador
 
         $borrados = $tramos->borrarSiEstaLibre($tramoId);
 
-        if ($borrados > 0) {
-            Vista::guardarAviso('Tramo borrado.', 'exito');
-        } else {
-            Vista::guardarAviso(
-                'No se ha borrado: el tramo ya tiene unidades de premio. Retira esas unidades primero.',
-                'error'
-            );
-        }
+        Vista::guardarAviso(
+            $borrados > 0
+                ? 'Tramo borrado.'
+                : $this->motivoDelBloqueoDeBorrado($tramos->obstaculosParaBorrar($tramoId)),
+            $borrados > 0 ? 'exito' : 'error'
+        );
 
         $this->redirigir('admin/promociones/' . $id . '/tramos');
+    }
+
+    /**
+     * Explica por que no se ha podido borrar un tramo.
+     *
+     * El mensaje va aparte porque el de un solo motivo era mitad falso y ademas
+     * proponia un camino que no llevaba a ninguna parte. Decia siempre «el tramo ya
+     * tiene unidades de premio. Retira esas unidades primero», y eso falla en tres
+     * casos distintos:
+     *
+     *   - El obstaculo son las participaciones, no las unidades, y no hay nada que
+     *     retirar.
+     *   - Las unidades ya estan entregadas, y una unidad entregada no se puede
+     *     retirar: el boton de «Retirar» del calendario solo toca las programadas.
+     *   - Las unidades ya estan retiradas, y retirarlas otra vez no las borra,
+     *     porque retirar no borra la fila. Ese caso es el que dejo a alguien ocho
+     *     retiradas a mano y un tramo que seguia sin poder borrar.
+     *
+     * Los tres casos se dicen por separado y cada uno dice lo que hay que hacer de
+     * verdad, o dice que no se puede, que tambien es una respuesta.
+     *
+     * @param array{unidades: int, retirables: int, participaciones: int} $obstaculos
+     *        Cuantos de cada.
+     *
+     * @return string El aviso, ya redactado.
+     */
+    private function motivoDelBloqueoDeBorrado(array $obstaculos): string
+    {
+        $unidades = max(0, (int) ($obstaculos['unidades'] ?? 0));
+        $retirables = max(0, (int) ($obstaculos['retirables'] ?? 0));
+        $participaciones = max(0, (int) ($obstaculos['participaciones'] ?? 0));
+
+        $motivos = [];
+
+        if ($unidades > 0) {
+            // «sin adjudicar» no se pone aqui a proposito: una unidad entregada
+            // esta adjudicada, y contarla como sin adjudicar seria mentira. Lo que
+            // es cierto en todos los casos es que son unidades de premio, y ya.
+            $motivos[] = $unidades === 1
+                ? 'tiene una unidad de premio'
+                : 'tiene ' . $unidades . ' unidades de premio';
+        }
+
+        if ($participaciones > 0) {
+            $motivos[] = $participaciones === 1
+                ? 'tiene una participacion registrada'
+                : 'tiene ' . $participaciones . ' participaciones registradas';
+        }
+
+        if ($motivos === []) {
+            // No deberia llegar aqui: si no habia obstaculos, el DELETE habria
+            // borrado. Se dice lo mismo que antes en vez de callarse, porque un
+            // aviso vacio deja a quien lo lee pensando que la accion no ha hecho
+            // nada.
+            return 'No se ha borrado: el tramo no se ha podido quitar.';
+        }
+
+        $texto = 'No se ha borrado: este tramo ' . implode(' y ', $motivos) . '.';
+
+        if ($unidades === 0) {
+            $texto .= ' Un tramo con participaciones registradas no se puede borrar.';
+
+            return $texto;
+        }
+
+        // Aqui hay unidades, y ahora toca decir que se puede hacer con ellas, que es
+        // la parte que el mensaje de un solo motivo no tenia. Solo se promete la
+        // salida cuando existe de verdad: si hay unidades entregadas o sin
+        // entregar, no hay ninguna que se pueda retirar, y decir «retira esas
+        // unidades» dejaria a alguien pulsando un boton que no hace nada. Se
+        // nombran las dos porque el boton «Retirar» solo acepta las programadas, y
+        // «entregadas» a secas dejaba fuera a las marcadas como no entregadas.
+        if ($retirables !== $unidades) {
+            $texto .= ' Las unidades entregadas o marcadas como no entregadas no se pueden retirar, asi que este tramo no se puede borrar.';
+
+            return $texto;
+        }
+
+        // Todas las unidades son retirables. Si ademas hay participaciones, avisar
+        // de que retirarlas basta seria falso: el tramo seguiria sin poder borrarse
+        // por ellas, asi que se dice las dos cosas por separado. El orden va del
+        // bloqueo mas duro al mas blando, que es el que si tiene salida.
+        $texto .= $participaciones > 0
+            ? ' Retira esas unidades desde el calendario, pero el tramo seguira sin poder borrarse mientras tenga esa participacion registrada.'
+            : ' Retira esas unidades desde el calendario antes de borrarlo.';
+
+        return $texto;
     }
 
     // =========================================================================
     // Calendario
     // =========================================================================
 
-    /**
-* Muestra el calendario, el plan y la diferencia entre los dos.
-     *
-     * @return void
-     */
+     /**
+      * Muestra el calendario, el plan y la diferencia entre los dos.
+      *
+      * @return void
+      */
     public function calendario(): void
     {
         $id = $this->parametroId('id', 'admin/promociones');

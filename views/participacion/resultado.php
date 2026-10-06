@@ -116,7 +116,7 @@ if ($texto === '') {
 <?php if ($bannerSup !== ''): ?>
     <img
         class="banner banner-superior"
-        src="<?= Vista::e(Aplicacion::asset('uploads/' . ltrim($bannerSup, '/'))) ?>"
+        src="<?= Vista::e(Aplicacion::subida($bannerSup)) ?>"
         alt="<?= Vista::e($bannerSupAlt) ?>">
 <?php endif; ?>
 
@@ -213,7 +213,7 @@ if ($texto === '') {
     <?php if ($imagen !== ''): ?>
         <img
             class="resultado-imagen"
-            src="<?= Vista::e(Aplicacion::asset('uploads/' . ltrim($imagen, '/'))) ?>"
+            src="<?= Vista::e(Aplicacion::subida($imagen)) ?>"
             alt="">
     <?php endif; ?>
 
@@ -255,6 +255,6 @@ if ($texto === '') {
 <?php if ($bannerPie !== ''): ?>
     <img
         class="banner banner-pie"
-        src="<?= Vista::e(Aplicacion::asset('uploads/' . ltrim($bannerPie, '/'))) ?>"
+        src="<?= Vista::e(Aplicacion::subida($bannerPie)) ?>"
         alt="<?= Vista::e($bannerPieAlt) ?>">
 <?php endif; ?>

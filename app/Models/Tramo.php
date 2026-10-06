@@ -44,6 +44,13 @@
  * «no se puede borrar». Un premio anulado se anula, que es lo que existe el estado
  * anulada para eso.
  *
+ * Las unidades ANULADAS son la excepcion, y la excepcion es precisamente lo que
+ * hace falta para que el estado anulada sea utilizable. Una unidad anulada esta
+ * muerta y no cuenta en ninguna cifra, asi que no se pierde nada que no quede en
+ * la tabla auditoria: si tambien bloqueara, un tramo con todas sus unidades
+ * retiradas no se podria borrar nunca y el panel seria un callejon sin salida.
+ * Ver borrarSiEstaLibre(), que explica el caso con detalle.
+ *
  * @see \App\Services\Tramos
  * @see \App\Models\UnidadPremio
  * @see apartado 4.2 de la especificacion, dias y jornadas
@@ -369,16 +376,39 @@ class Tramo extends Modelo
     /**
      * Borra un tramo solo si no tiene unidades colgadas.
      *
-     * El borrado se hace con la condicion de que no exista ninguna unidad, en la
-     * propia sentencia y no en una comprobacion previa. Asi el recuento de filas
-     * afectadas dice la verdad: si entre la comprobacion y el borrado otra
-     * peticion crea una unidad en ese tramo —que es justo lo que pasaria con dos
-     * administradores abiertos a la vez— el DELETE no borra nada en lugar de
-     * llevarsela por delante en cascada.
+     * El borrado se hace con la condicion de que no exista ninguna unidad viva, en
+     * la propia sentencia y no en una comprobacion previa. «Viva» es la que cuyo
+     * estado no es «anulada». Asi el recuento de filas afectadas dice la verdad: si
+     * entre la comprobacion y el borrado otra peticion crea una unidad en ese tramo
+     * —que es justo lo que pasaria con dos administradores abiertos a la vez— el
+     * DELETE no borra nada en lugar de llevarsela por delante en cascada.
+     *
+     * ============================================================================
+     * POR QUE LAS UNIDADES ANULADAS NO IMPIDEN BORRAR
+     * ============================================================================
+     *
+     * Una unidad anulada esta muerta: no se reparte, no se entrega y no cuenta en
+     * ninguna de las cifras que el panel enseña. Por eso solo bloquean las que
+     * siguen vivas.
+     *
+     * Sin esto un tramo quedaba en un callejon sin salida. El mensaje de error
+     * decia «retira esas unidades primero», quien lo leia retiraba las suyas una a
+     * una desde el calendario, y al volver a pulsar «Borrar el tramo» el tramo
+     * seguia sin borrarse porque las unidades seguian ahi, ahora anuladas. Nadie
+     * podia deshacer el retiro, porque retirar no borra la fila: el unico camino que
+     * quedaba era crear otro tramo, y el anterior se quedaba ahi para siempre. Es
+     * exactamente lo que paso en la campana 1 del hito 12, y se ve entero en la
+     * tabla de auditoria: ocho retiradas a mano y despues un tramo nuevo.
+     *
+     * Lo que se pierde al borrar no es nada que no quede escrito en otro sitio. La
+     * cascada de fk_unidades_tramo se lleva las filas anuladas, pero la decision de
+     * retirarlas esta en la tabla auditoria, con su estado antes y despues, y esa
+     * tabla no cuelga de tramos. Los intentos rechazados de ese tramo tampoco se
+     * pierden: fk_rechazos_tramo es ON DELETE SET NULL y las filas siguen.
      *
      * @param int $tramoId Tramo que se quiere borrar.
      *
-     * @return int 1 si se ha borrado, 0 si tenia unidades.
+     * @return int 1 si se ha borrado, 0 si tenia unidades vivas o participaciones.
      *
      * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
      */
@@ -387,10 +417,73 @@ class Tramo extends Modelo
         return $this->db->ejecutar(
             'DELETE t FROM tramos t
               WHERE t.id = ?
-                AND NOT EXISTS (SELECT 1 FROM unidades_premio u WHERE u.tramo_id = t.id)
+                AND NOT EXISTS (
+                        SELECT 1
+                          FROM unidades_premio u
+                         WHERE u.tramo_id = t.id
+                           AND u.estado <> ?
+                    )
                 AND NOT EXISTS (SELECT 1 FROM participaciones p WHERE p.tramo_id = t.id)',
-            [$tramoId]
+            [$tramoId, UnidadPremio::ESTADO_ANULADA]
         );
+    }
+
+    /**
+     * Cuenta lo que impide borrar un tramo, para poder explicarlo.
+     *
+     * Va aparte de borrarSiEstaLibre() y se consulta solo cuando el borrado ha
+     * devuelto 0, porque en el camino feliz no hace falta. Existe porque el aviso
+     * de un unico motivo era mitad falso: decia siempre «tiene unidades de
+     * premio. Retira esas unidades primero» cuando el obstaculo tambien puede ser
+     * una participacion, y porque una unidad ya entregada no se puede retirar, de
+     * modo que el consejo de retirarla no llevaba a ninguna parte.
+     *
+     * Las unidades anuladas no se cuentan, por el mismo motivo que no impiden
+     * borrar: si se contaran, el panel anunciaria un obstaculo que no existe, que
+     * es el bucle del que este metodo sale.
+     *
+     * «retirables» va aparte de «unidades» a proposito, y no es redundante: es lo
+     * unico que decide si se puede prometer «retira esas unidades primero» como
+     * salida. Las unidades programadas se pueden retirar desde el calendario; las
+     * entregadas y las no entregadas no, y decirlo cuando no se puede es preferible
+     * a mandar a alguien a un sitio donde el boton no hace nada.
+     *
+     * @param int $tramoId Tramo que se quiere borrar.
+     *
+     * @return array{unidades: int, retirables: int, participaciones: int} Cuantos
+     *                de cada.
+     *
+     * @throws \App\Core\ErrorBaseDeDatos Si la consulta falla.
+     */
+    public function obstaculosParaBorrar(int $tramoId): array
+    {
+        $fila = $this->db->uno(
+            'SELECT (SELECT COUNT(*)
+                        FROM unidades_premio u
+                       WHERE u.tramo_id = ? AND u.estado <> ?) AS unidades,
+                    (SELECT COUNT(*)
+                        FROM unidades_premio u
+                       WHERE u.tramo_id = ? AND u.estado = ?) AS retirables,
+                    (SELECT COUNT(*)
+                        FROM participaciones p
+                       WHERE p.tramo_id = ?) AS participaciones',
+            [
+                // En el orden en que aparecen los interrogantes, no agrupados por
+                // tipo: son parametros posicionales y este SQL tiene el estado
+                // en el segundo sitio de cada subconsulta.
+                $tramoId,
+                UnidadPremio::ESTADO_ANULADA,
+                $tramoId,
+                UnidadPremio::ESTADO_PROGRAMADA,
+                $tramoId,
+            ]
+        );
+
+        return [
+            'unidades'        => (int) ($fila['unidades'] ?? 0),
+            'retirables'      => (int) ($fila['retirables'] ?? 0),
+            'participaciones' => (int) ($fila['participaciones'] ?? 0),
+        ];
     }
 
     /**

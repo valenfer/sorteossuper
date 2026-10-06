@@ -139,25 +139,27 @@ Este es el resumen para retomar el trabajo. Si solo se lee una cosa de todo el
 documento, que sea esto.
 
 **Punto exacto en el que está.** Los hitos 0 a 11 están cerrados, las decisiones D4,
-D6 y D19 están confirmadas, y los once hitos más `ddd9537` están subidos a
-`origin/master`. A eso se suman dos correcciones de fallos reales, sin hito porque no
-lo son: la de las imágenes subidas y la del borrado de tramos. El commit de
+D6 y D19 están confirmadas, y `master` está subido a `origin/master` con todo hecho:
+los once hitos, `ddd9537` y las dos correcciones de fallos reales. A esas correcciones
+no se les puso hito porque no lo son —la de las imágenes subidas y la del borrado de
+tramos— y están en el commit `65030e6`. El commit de
 D19 es `c6e91c4`, el de D4 es `dbf2fdf`, el del hito 7 es `51fec02`, el del hito 8,
 que es D6, es `cb9b714`, el del hito 9 es `311b23d`, el del hito 10 es `cf29f14` y el
 del hito 11 es `bdb193d`.
 
 **Lo siguiente, por este orden.**
 
-1. **Subir este commit a `origin/master`.** Es lo único que queda.
-2. **Nada pendiente después de eso.** El calendario no se pasa del plan al añadir ni
-   al mover, y las cuatro revisiones —añadir, mover, retirar y generar— dejan asiento.
-   El caso 22 lo prueba y el caso 21 se ha reescrito para el contrato nuevo. Las
-   imágenes subidas se sirven con `Aplicacion::subida()` y un tramo sin unidades
-   vivas se puede borrar. La suite son 23 casos y 681 comprobaciones.
+1. **Nada pendiente.** El árbol de trabajo está limpio, `master` está subido a
+   `origin/master` y las tres comprobaciones pasan. No quedan decisiones de producto
+   abiertas: las dos que había se cerraron en el hito 11.
+2. **Lo que hay hecho.** El calendario no se pasa del plan al añadir ni al mover, y
+   las cuatro revisiones —añadir, mover, retirar y generar— dejan asiento. El caso 22
+   lo prueba y el caso 21 se ha reescrito para el contrato nuevo. Las imágenes
+   subidas se sirven con `Aplicacion::subida()` y un tramo sin unidades vivas se
+   puede borrar. La suite son 23 casos y 681 comprobaciones.
 3. **Los nueve casos de aceptación tienen su camino completo**, y no queda ninguna
-   decisión de producto abierta: las dos que quedaban se han cerrado en el hito 11.
-   Lo único que puede pedir trabajo a partir de aquí es el promotor, y no hay ninguna
-   pregunta esperando respuesta.
+   pregunta esperando respuesta. Lo único que puede pedir trabajo a partir de aquí es
+   el promotor.
 
 **La base de datos real está vacía, a propósito.** Se borraron todas las promociones,
 tramos, premios, unidades, participaciones y asientos de auditoría para empezar de
